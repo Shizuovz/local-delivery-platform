@@ -1,0 +1,5 @@
+export enum DeliveryType {
+  SEND = 'SEND',
+  BUSINESS_DELIVERY = 'BUSINESS_DELIVERY',
+  LIMITED_FETCH = 'LIMITED_FETCH',
+}

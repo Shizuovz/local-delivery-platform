@@ -1,0 +1,435 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DeliveryType {
+  SEND
+  BUSINESS_DELIVERY
+  LIMITED_FETCH
+}
+
+enum DeliveryStatus {
+  DRAFT
+  QUOTED
+  CONFIRMED
+  SEARCHING_RIDER
+  RIDER_ASSIGNED
+  EN_ROUTE_PICKUP
+  ARRIVED_PICKUP
+  PICKED_UP
+  EN_ROUTE_DROP
+  ARRIVED_DROP
+  DELIVERED
+  CANCELLED
+  FAILED
+  RETURN_REQUIRED
+  RETURNED
+  DISPUTED
+}
+
+enum AssignmentStatus {
+  PENDING_OFFER
+  OFFERED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+  REASSIGNED
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  PAID
+  FAILED
+  REFUND_PENDING
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum RiderAvailabilityStatus {
+  OFFLINE
+  ONLINE_IDLE
+  OFFERED_JOB
+  ON_ACTIVE_DELIVERY
+  SUSPENDED
+}
+
+model User {
+  id                  String                  @id @default(uuid())
+  phone               String                  @unique
+  email               String?                 @unique
+  name                String?
+  status              String                  @default("ACTIVE")
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  userRoles           UserRole[]
+  riderProfile        RiderProfile?
+  ownedBusinesses     Business[]              @relation("BusinessOwner")
+  customerDeliveries  Delivery[]              @relation("CustomerDeliveries")
+  deliveryHistory     DeliveryStatusHistory[] @relation("DeliveryHistoryActor")
+  proofs              Proof[]                 @relation("ProofCreator")
+  supportTickets      SupportTicket[]
+  auditLogs           AuditLog[]              @relation("AuditActor")
+}
+
+model Role {
+  id        String     @id @default(uuid())
+  code      String     @unique
+  userRoles UserRole[]
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User   @relation(fields: [userId], references: [id])
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+}
+
+model RiderProfile {
+  userId             String                   @id
+  user               User                     @relation(fields: [userId], references: [id])
+  approvalStatus     String                   @default("PENDING")
+  availabilityStatus RiderAvailabilityStatus  @default(OFFLINE)
+  vehicleType        String
+  activeJobLimit     Int                      @default(1)
+  suspended          Boolean                  @default(false)
+  documents          RiderDocument[]
+  assignments        Assignment[]
+  locations          RiderLocation[]
+  earnings           RiderEarning[]
+}
+
+model RiderDocument {
+  id        String       @id @default(uuid())
+  riderId   String
+  rider     RiderProfile @relation(fields: [riderId], references: [userId])
+  type      String
+  fileUrl   String
+  status    String       @default("PENDING")
+  expiresAt DateTime?
+  createdAt DateTime     @default(now())
+}
+
+model Business {
+  id          String               @id @default(uuid())
+  ownerUserId String
+  owner       User                 @relation("BusinessOwner", fields: [ownerUserId], references: [id])
+  name        String
+  status      String               @default("PENDING")
+  billingMode String               @default("PREPAID")
+  addresses   BusinessAddress[]
+  deliveries  Delivery[]
+  settlements BusinessSettlement[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+}
+
+model BusinessAddress {
+  id         String   @id @default(uuid())
+  businessId String
+  addressId  String
+  business   Business @relation(fields: [businessId], references: [id])
+  address    Address  @relation(fields: [addressId], references: [id])
+}
+
+model Address {
+  id                  String            @id @default(uuid())
+  label               String?
+  line1               String
+  city                String
+  lat                 Decimal           @db.Decimal(10, 7)
+  lng                 Decimal           @db.Decimal(10, 7)
+  zoneId              String?
+  zone                ServiceZone?      @relation(fields: [zoneId], references: [id])
+  pickupDeliveries    Delivery[]        @relation("PickupAddress")
+  dropDeliveries      Delivery[]        @relation("DropAddress")
+  businessAddresses   BusinessAddress[]
+  createdAt           DateTime          @default(now())
+}
+
+model ServiceZone {
+  id        String    @id @default(uuid())
+  code      String    @unique
+  name      String
+  city      String
+  active    Boolean   @default(true)
+  centerLat Decimal   @db.Decimal(10, 7)
+  centerLng Decimal   @db.Decimal(10, 7)
+  radiusKm  Decimal   @db.Decimal(8, 2)
+  addresses Address[]
+}
+
+model Delivery {
+  id                    String                  @id @default(uuid())
+  type                  DeliveryType
+  status                DeliveryStatus          @default(DRAFT)
+  customerId            String?
+  customer              User?                   @relation("CustomerDeliveries", fields: [customerId], references: [id])
+  businessId            String?
+  business              Business?               @relation(fields: [businessId], references: [id])
+  quoteId               String                  @unique
+  quote                 DeliveryQuote           @relation(fields: [quoteId], references: [id])
+  pickupAddressId       String
+  pickupAddress         Address                 @relation("PickupAddress", fields: [pickupAddressId], references: [id])
+  dropAddressId         String
+  dropAddress           Address                 @relation("DropAddress", fields: [dropAddressId], references: [id])
+  paymentId             String?
+  assignedRiderId       String?
+  idempotencyKey        String
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  items                 DeliveryItem[]
+  history               DeliveryStatusHistory[]
+  assignments           Assignment[]
+  proofs                Proof[]
+  payments              Payment[]
+  supportTickets        SupportTicket[]
+  riderEarnings         RiderEarning[]
+  businessSettlements   BusinessSettlement[]
+
+  @@unique([customerId, idempotencyKey])
+  @@index([status, createdAt])
+  @@index([customerId, createdAt])
+  @@index([businessId, createdAt])
+  @@index([type, status, createdAt])
+}
+
+model DeliveryItem {
+  id                     String   @id @default(uuid())
+  deliveryId             String
+  delivery               Delivery @relation(fields: [deliveryId], references: [id])
+  description            String
+  packageClass           String
+  approximateWeightGrams Int?
+  quantity               Int      @default(1)
+  declaredValueMinor     Int?
+  notes                  String?
+}
+
+model DeliveryQuote {
+  id                  String    @id @default(uuid())
+  type                DeliveryType
+  customerId          String?
+  businessId          String?
+  pickupAddressId     String
+  dropAddressId       String
+  distanceMeters      Int
+  amountMinor         Int
+  currency            String    @default("INR")
+  baseFeeMinor        Int
+  distanceFeeMinor    Int
+  packageFeeMinor     Int
+  zoneSurchargeMinor  Int
+  platformFeeMinor    Int
+  taxMinor            Int
+  discountMinor       Int
+  expiresAt           DateTime
+  confirmedAt         DateTime?
+  delivery            Delivery?
+  createdAt           DateTime  @default(now())
+}
+
+model DeliveryStatusHistory {
+  id           String         @id @default(uuid())
+  deliveryId   String
+  delivery     Delivery       @relation(fields: [deliveryId], references: [id])
+  status       DeliveryStatus
+  actorId      String?
+  actor        User?          @relation("DeliveryHistoryActor", fields: [actorId], references: [id])
+  reason       String?
+  metadata     Json?
+  timestamp    DateTime       @default(now())
+
+  @@index([deliveryId, timestamp])
+}
+
+model Assignment {
+  id         String           @id @default(uuid())
+  deliveryId String
+  delivery   Delivery         @relation(fields: [deliveryId], references: [id])
+  riderId    String
+  rider      RiderProfile     @relation(fields: [riderId], references: [userId])
+  status     AssignmentStatus
+  offeredAt  DateTime         @default(now())
+  expiresAt  DateTime?
+  acceptedAt DateTime?
+  acceptedDeliveryKey String? @unique
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@index([deliveryId, status])
+  @@index([riderId, status, createdAt])
+}
+
+model RiderLocation {
+  id         String       @id @default(uuid())
+  riderId    String
+  rider      RiderProfile @relation(fields: [riderId], references: [userId])
+  lat        Decimal      @db.Decimal(10, 7)
+  lng        Decimal      @db.Decimal(10, 7)
+  recordedAt DateTime     @default(now())
+
+  @@index([riderId, recordedAt])
+}
+
+model Proof {
+  id          String   @id @default(uuid())
+  deliveryId  String
+  delivery    Delivery @relation(fields: [deliveryId], references: [id])
+  type        String
+  createdBy   String
+  creator     User     @relation("ProofCreator", fields: [createdBy], references: [id])
+  fileUrl     String?
+  otpVerified Boolean  @default(false)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+}
+
+model Payment {
+  id           String               @id @default(uuid())
+  deliveryId   String
+  delivery     Delivery             @relation(fields: [deliveryId], references: [id])
+  provider     String
+  providerRef  String
+  amountMinor  Int
+  currency     String               @default("INR")
+  status       PaymentStatus
+  transactions PaymentTransaction[]
+  refunds      Refund[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([provider, providerRef])
+}
+
+model PaymentTransaction {
+  id              String   @id @default(uuid())
+  paymentId       String
+  payment         Payment  @relation(fields: [paymentId], references: [id])
+  type            String
+  amountMinor     Int
+  providerRef     String
+  providerEventId String
+  rawEvent         Json?
+  createdAt       DateTime @default(now())
+
+  @@unique([providerEventId])
+}
+
+model Refund {
+  id          String       @id @default(uuid())
+  paymentId   String
+  payment     Payment      @relation(fields: [paymentId], references: [id])
+  amountMinor Int
+  status      RefundStatus
+  reason      String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model RiderEarning {
+  id          String       @id @default(uuid())
+  deliveryId  String
+  delivery    Delivery     @relation(fields: [deliveryId], references: [id])
+  riderId     String
+  rider       RiderProfile @relation(fields: [riderId], references: [userId])
+  amountMinor Int
+  currency    String       @default("INR")
+  status      String       @default("PENDING")
+  createdAt   DateTime     @default(now())
+}
+
+model BusinessSettlement {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  deliveryId  String
+  delivery    Delivery @relation(fields: [deliveryId], references: [id])
+  amountMinor Int
+  currency    String   @default("INR")
+  status      String   @default("OPEN")
+  createdAt   DateTime @default(now())
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  channel   String
+  template  String
+  status    String
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model SupportTicket {
+  id         String   @id @default(uuid())
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id])
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  category   String
+  status     String   @default("OPEN")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model IdempotencyKey {
+  id           String   @id @default(uuid())
+  actorId      String
+  action       String
+  key          String
+  entityType   String?
+  entityId     String?
+  responseHash String?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime?
+
+  @@unique([actorId, action, key])
+  @@index([entityType, entityId])
+}
+
+model OtpChallenge {
+  id           String   @id @default(uuid())
+  phone        String
+  codeHash     String
+  attempts     Int      @default(0)
+  consumedAt   DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([phone, expiresAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  actor      User     @relation("AuditActor", fields: [actorId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId, createdAt])
+}

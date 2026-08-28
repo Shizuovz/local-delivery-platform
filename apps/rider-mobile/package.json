@@ -1,0 +1,19 @@
+{
+  "name": "@local-delivery/rider-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/app/index.ts",
+  "scripts": {
+    "start": "expo start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo": "^57.0.17",
+    "react": "19.2.8",
+    "react-native": "^0.86.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "typescript": "^5.7.2"
+  }
+}
