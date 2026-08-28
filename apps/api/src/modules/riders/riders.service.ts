@@ -73,6 +73,10 @@ export class RidersService {
     }
 
     const deliveryId = this.deliveryIdForAcceptedAssignment(actor, assignmentId);
+    const delivery = this.store.deliveries.get(deliveryId);
+    if (delivery?.type === 'BUSINESS_DELIVERY' && !pickupReference) {
+      throw new ForbiddenError('Pickup proof is required for business deliveries');
+    }
     this.deliveriesService.transition(deliveryId, DeliveryStatus.ARRIVED_PICKUP, actor.id, 'Rider arrived pickup');
     if (pickupReference) {
       this.createProof(actor, deliveryId, 'PICKUP_REFERENCE', { pickupReference });
@@ -184,6 +188,10 @@ export class RidersService {
 
   private async pickedUpWithPrisma(actor: User, assignmentId: string, pickupReference?: string) {
     const deliveryId = await this.deliveryIdForAcceptedAssignmentWithPrisma(actor, assignmentId);
+    const delivery = await this.prisma.delivery.findUnique({ where: { id: deliveryId } });
+    if (delivery?.type === 'BUSINESS_DELIVERY' && !pickupReference) {
+      throw new ForbiddenError('Pickup proof is required for business deliveries');
+    }
     await this.deliveriesService.transition(deliveryId, DeliveryStatus.ARRIVED_PICKUP, actor.id, 'Rider arrived pickup');
     if (pickupReference) {
       await this.createProofWithPrisma(actor, deliveryId, 'PICKUP_REFERENCE', { pickupReference });

@@ -4,6 +4,8 @@ import {
   Assignment,
   AssignmentStatus,
   AuditLog,
+  Business,
+  BusinessSettlement,
   Delivery,
   DeliveryItem,
   DeliveryQuote,
@@ -35,6 +37,8 @@ export class InMemoryStore {
   readonly users = new Map<string, User>();
   readonly usersByPhone = new Map<string, string>();
   readonly riders = new Map<string, RiderProfile>();
+  readonly businesses = new Map<string, Business>();
+  readonly businessSettlements = new Map<string, BusinessSettlement>();
   readonly locations = new Map<string, RiderLocation>();
   readonly quotes = new Map<string, DeliveryQuote>();
   readonly deliveries = new Map<string, Delivery>();
@@ -112,6 +116,17 @@ export class InMemoryStore {
   seed() {
     const admin = this.findOrCreateUser('+910000000001', ['OPS_ADMIN', 'SUPER_ADMIN']);
     admin.name = 'Ops Admin';
+
+    const businessUser = this.findOrCreateUser('+910000000010', ['BUSINESS']);
+    businessUser.name = 'Demo Business Owner';
+    const businessId = this.createId('biz');
+    this.businesses.set(businessId, {
+      id: businessId,
+      ownerUserId: businessUser.id,
+      name: 'Demo Postpaid Business',
+      status: 'APPROVED',
+      billingMode: 'POSTPAID',
+    });
 
     const riderUser = this.findOrCreateUser('+910000000002', ['RIDER']);
     riderUser.name = 'Demo Rider';

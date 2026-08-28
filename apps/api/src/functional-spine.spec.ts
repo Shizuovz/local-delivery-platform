@@ -4,9 +4,10 @@ import { PrismaService } from './common/prisma.service';
 import { DispatchQueueService } from './modules/dispatch/dispatch.queue';
 import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
+import { BusinessesService } from './modules/businesses/businesses.service';
 import { PaymentsService } from './modules/payments/payments.service';
 import { RidersService } from './modules/riders/riders.service';
-import { AssignmentStatus, DeliveryStatus, RiderAvailabilityStatus } from '@local-delivery/types';
+import { AssignmentStatus, DeliveryStatus, DeliveryType, RiderAvailabilityStatus } from '@local-delivery/types';
 
 const runInMemory = process.env.PERSISTENCE_MODE === 'prisma' ? describe.skip : describe;
 
@@ -17,11 +18,14 @@ function setup() {
   const dispatch = new DispatchService(store, prisma);
   const deliveries = new DeliveriesService(store, dispatch, prisma);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
+  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
   const riders = new RidersService(store, deliveries, dispatch, prisma);
   const customer = store.findOrCreateUser('+919999999999', ['CUSTOMER']);
   const rider = [...store.users.values()].find((user) => user.roles.includes('RIDER'))!;
   const admin = [...store.users.values()].find((user) => user.roles.includes('OPS_ADMIN'))!;
-  return { store, dispatch, deliveries, payments, riders, customer, rider, admin };
+  const businessUser = [...store.users.values()].find((user) => user.roles.includes('BUSINESS'))!;
+  const business = [...store.businesses.values()][0];
+  return { store, dispatch, deliveries, payments, businesses, riders, customer, rider, admin, businessUser, business };
 }
 
 const quoteInput = {
@@ -164,6 +168,48 @@ runInMemory('functional SEND spine', () => {
     expect([...store.supportTickets.values()].some((ticket) => ticket.deliveryId === created.delivery.id && ticket.category === 'DISPATCH_UNASSIGNED')).toBe(true);
     expect(store.auditLogs.some((log) => log.action === 'dispatch.admin_attention' && log.entityId === created.delivery.id)).toBe(true);
   });
+
+  it('creates a postpaid business delivery with settlement and dispatch', () => {
+    const { businesses, businessUser, business, rider } = setup();
+
+    const result = businesses.createDelivery(businessUser, {
+      businessId: business.id,
+      idempotencyKey: 'business-send-001',
+      ...businessDeliveryInput,
+    });
+
+    expect(result.delivery.type).toBe(DeliveryType.BUSINESS_DELIVERY);
+    expect(result.delivery.status).toBe(DeliveryStatus.SEARCHING_RIDER);
+    expect(result.settlement?.status).toBe('OPEN');
+    expect(result.payment).toBeUndefined();
+    expect((result.dispatch as { offeredAssignment?: { riderId: string } }).offeredAssignment?.riderId).toBe(rider.id);
+  });
+
+  it('blocks another business from reading a business delivery', () => {
+    const { businesses, store, businessUser, business } = setup();
+    const result = businesses.createDelivery(businessUser, {
+      businessId: business.id,
+      idempotencyKey: 'business-send-002',
+      ...businessDeliveryInput,
+    });
+    const otherBusinessUser = store.findOrCreateUser('+910000000011', ['BUSINESS']);
+
+    expect(() => businesses.getDelivery(otherBusinessUser, result.delivery.id)).toThrow('You cannot access this delivery');
+  });
+
+  it('requires pickup proof for business deliveries', () => {
+    const { businesses, riders, businessUser, business, rider } = setup();
+    const result = businesses.createDelivery(businessUser, {
+      businessId: business.id,
+      idempotencyKey: 'business-send-003',
+      ...businessDeliveryInput,
+    });
+    const assignmentId = (result.dispatch as { offeredAssignment: { id: string } }).offeredAssignment.id;
+    const accepted = riders.accept(rider, assignmentId);
+    riders.arrivedPickup(rider, accepted.assignment.id);
+
+    expect(() => riders.pickedUp(rider, accepted.assignment.id)).toThrow('Pickup proof is required for business deliveries');
+  });
 });
 
 function createOnlineRider(store: InMemoryStore, phone: string) {
@@ -184,3 +230,23 @@ function createOnlineRider(store: InMemoryStore, phone: string) {
   });
   return rider;
 }
+
+const businessDeliveryInput = {
+  pickupAddress: {
+    line1: 'Business Pickup',
+    city: 'Bengaluru',
+    lat: 12.9716,
+    lng: 77.5946,
+  },
+  dropAddress: {
+    line1: 'Customer Drop',
+    city: 'Bengaluru',
+    lat: 12.98,
+    lng: 77.61,
+  },
+  item: {
+    description: 'Business package',
+    packageClass: 'SMALL' as const,
+    quantity: 1,
+  },
+};

@@ -4,6 +4,7 @@ import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
 import { AuthService } from './modules/auth/auth.service';
 import { AdminService } from './modules/admin/admin.service';
+import { BusinessesService } from './modules/businesses/businesses.service';
 import { DispatchQueueService } from './modules/dispatch/dispatch.queue';
 import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
@@ -41,6 +42,7 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const dispatch = new DispatchService(store, prisma);
   const deliveries = new DeliveriesService(store, dispatch, prisma);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
+  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
   const riders = new RidersService(store, deliveries, dispatch, prisma);
   const actors = new ActorService(store, prisma);
   const auth = new AuthService(store, prisma);
@@ -186,6 +188,50 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     await expect(deliveries.transition(delivered.id, DeliveryStatus.EN_ROUTE_DROP, rider.id, 'invalid rewind')).rejects.toThrow('Delivery is terminal');
   });
 
+  it('creates a postpaid business delivery with settlement and dispatch', async () => {
+    const { owner, business } = await createApprovedBusiness('POSTPAID');
+    const rider = await demoRiderActor();
+
+    const result = await businesses.createDelivery(owner, {
+      businessId: business.id,
+      idempotencyKey: `business-${Date.now()}`,
+      ...businessDeliveryInput,
+    });
+
+    expect(result.delivery.type).toBe('BUSINESS_DELIVERY');
+    expect(result.delivery.status).toBe(DeliveryStatus.SEARCHING_RIDER);
+    expect(result.settlement?.status).toBe('OPEN');
+    expect(result.payment).toBeUndefined();
+    expect((result.dispatch as { offeredAssignment?: { riderId: string } }).offeredAssignment?.riderId).toBe(rider.id);
+  });
+
+  it('blocks another business from reading a business delivery', async () => {
+    const { owner, business } = await createApprovedBusiness('POSTPAID');
+    const other = await createApprovedBusiness('POSTPAID');
+    const result = await businesses.createDelivery(owner, {
+      businessId: business.id,
+      idempotencyKey: `business-auth-${Date.now()}`,
+      ...businessDeliveryInput,
+    });
+
+    await expect(businesses.getDelivery(other.owner, result.delivery.id)).rejects.toThrow('You cannot access this delivery');
+  });
+
+  it('requires pickup proof for business deliveries', async () => {
+    const { owner, business } = await createApprovedBusiness('POSTPAID');
+    const rider = await demoRiderActor();
+    const result = await businesses.createDelivery(owner, {
+      businessId: business.id,
+      idempotencyKey: `business-proof-${Date.now()}`,
+      ...businessDeliveryInput,
+    });
+    const assignmentId = (result.dispatch as { offeredAssignment: { id: string } }).offeredAssignment.id;
+    const accepted = await riders.accept(rider, assignmentId);
+    await riders.arrivedPickup(rider, accepted.assignment.id);
+
+    await expect(riders.pickedUp(rider, accepted.assignment.id)).rejects.toThrow('Pickup proof is required for business deliveries');
+  });
+
   async function createCustomer() {
     const phone = `+9198${Date.now().toString().slice(-8)}${Math.floor(Math.random() * 1000)}`;
     await auth.requestOtp(phone);
@@ -254,4 +300,50 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     });
     return actors.requireActor(user.id);
   }
+
+  async function createApprovedBusiness(billingMode: 'PREPAID' | 'POSTPAID') {
+    const user = await prisma.user.create({
+      data: {
+        phone: `+9166${Date.now().toString().slice(-8)}${Math.floor(Math.random() * 1000)}`,
+        status: 'ACTIVE',
+      },
+    });
+    const role = await prisma.role.upsert({
+      where: { code: 'BUSINESS' },
+      update: {},
+      create: { code: 'BUSINESS' },
+    });
+    await prisma.userRole.create({
+      data: { userId: user.id, roleId: role.id },
+    });
+    const business = await prisma.business.create({
+      data: {
+        ownerUserId: user.id,
+        name: 'Test Business',
+        status: 'APPROVED',
+        billingMode,
+      },
+    });
+    return { owner: await actors.requireActor(user.id), business };
+  }
 });
+
+const businessDeliveryInput = {
+  pickupAddress: {
+    line1: 'Business Pickup',
+    city: 'Bengaluru',
+    lat: 12.9716,
+    lng: 77.5946,
+  },
+  dropAddress: {
+    line1: 'Customer Drop',
+    city: 'Bengaluru',
+    lat: 12.98,
+    lng: 77.61,
+  },
+  item: {
+    description: 'Business package',
+    packageClass: 'SMALL' as const,
+    quantity: 1,
+  },
+};

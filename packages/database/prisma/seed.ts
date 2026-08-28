@@ -25,6 +25,12 @@ async function main() {
     create: { phone: '+910000000002', name: 'Demo Rider', status: 'ACTIVE' },
   });
 
+  const businessOwner = await prisma.user.upsert({
+    where: { phone: '+910000000010' },
+    update: { name: 'Demo Business Owner', status: 'ACTIVE' },
+    create: { phone: '+910000000010', name: 'Demo Business Owner', status: 'ACTIVE' },
+  });
+
   for (const roleCode of ['OPS_ADMIN', 'SUPER_ADMIN']) {
     const role = await prisma.role.findUniqueOrThrow({ where: { code: roleCode } });
     await prisma.userRole.upsert({
@@ -39,6 +45,30 @@ async function main() {
     where: { userId_roleId: { userId: rider.id, roleId: riderRole.id } },
     update: {},
     create: { userId: rider.id, roleId: riderRole.id },
+  });
+
+  const businessRole = await prisma.role.findUniqueOrThrow({ where: { code: 'BUSINESS' } });
+  await prisma.userRole.upsert({
+    where: { userId_roleId: { userId: businessOwner.id, roleId: businessRole.id } },
+    update: {},
+    create: { userId: businessOwner.id, roleId: businessRole.id },
+  });
+
+  await prisma.business.upsert({
+    where: { id: '00000000-0000-4000-8000-000000000010' },
+    update: {
+      ownerUserId: businessOwner.id,
+      name: 'Demo Postpaid Business',
+      status: 'APPROVED',
+      billingMode: 'POSTPAID',
+    },
+    create: {
+      id: '00000000-0000-4000-8000-000000000010',
+      ownerUserId: businessOwner.id,
+      name: 'Demo Postpaid Business',
+      status: 'APPROVED',
+      billingMode: 'POSTPAID',
+    },
   });
 
   await prisma.riderProfile.upsert({
