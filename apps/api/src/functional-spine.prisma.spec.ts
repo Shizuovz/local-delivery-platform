@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ActorService } from './common/actor.service';
 import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
+import { quoteDeliverySchema } from '@local-delivery/validation';
 import { AuthService } from './modules/auth/auth.service';
 import { AdminService } from './modules/admin/admin.service';
 import { BusinessesService } from './modules/businesses/businesses.service';
@@ -229,7 +230,51 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     const accepted = await riders.accept(rider, assignmentId);
     await riders.arrivedPickup(rider, accepted.assignment.id);
 
-    await expect(riders.pickedUp(rider, accepted.assignment.id)).rejects.toThrow('Pickup proof is required for business deliveries');
+    await expect(riders.pickedUp(rider, accepted.assignment.id)).rejects.toThrow('Pickup proof is required for this delivery type');
+  });
+
+  it('creates prepaid LIMITED_FETCH and dispatches after payment', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const quote = await deliveries.createQuote(customer, limitedFetchInput);
+    const created = await deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: `limited-fetch-${Date.now()}` });
+    const persistedQuote = await prisma.deliveryQuote.findUniqueOrThrow({ where: { id: quote.id } });
+
+    expect(quote.type).toBe('LIMITED_FETCH');
+    expect(created.delivery.type).toBe('LIMITED_FETCH');
+    expect(created.payment.status).toBe('PENDING');
+    expect(persistedQuote.metadata).toEqual(expect.objectContaining({
+      limitedFetch: expect.objectContaining({
+        pickupReference: 'ORDER-123',
+        itemAlreadyPaid: true,
+        riderPaymentAllowed: false,
+        substitutionAllowed: false,
+      }),
+    }));
+
+    const paid = await payments.confirmMockPayment(customer, created.payment.id, `evt-limited-fetch-${Date.now()}`);
+    expect(paid.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
+  });
+
+  it('requires pickup proof for LIMITED_FETCH deliveries', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const quote = await deliveries.createQuote(customer, limitedFetchInput);
+    const created = await deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: `limited-fetch-proof-${Date.now()}` });
+    const paid = await payments.confirmMockPayment(customer, created.payment.id, `evt-limited-fetch-proof-${Date.now()}`);
+    const accepted = await riders.accept(rider, paid.dispatch!.offeredAssignment!.id);
+    await riders.arrivedPickup(rider, accepted.assignment.id);
+
+    await expect(riders.pickedUp(rider, accepted.assignment.id)).rejects.toThrow('Pickup proof is required for this delivery type');
+  });
+
+  it('rejects rider-funded purchase fields for LIMITED_FETCH quotes', () => {
+    const result = quoteDeliverySchema.safeParse({
+      ...limitedFetchInput,
+      riderPaymentAmountMinor: 50000,
+    });
+
+    expect(result.success).toBe(false);
   });
 
   async function createCustomer() {
@@ -346,4 +391,28 @@ const businessDeliveryInput = {
     packageClass: 'SMALL' as const,
     quantity: 1,
   },
+};
+
+const limitedFetchInput = {
+  type: 'LIMITED_FETCH' as const,
+  pickupAddress: {
+    line1: 'Known Pickup Counter',
+    city: 'Bengaluru',
+    lat: 12.9716,
+    lng: 77.5946,
+  },
+  dropAddress: {
+    line1: 'Home Drop',
+    city: 'Bengaluru',
+    lat: 12.98,
+    lng: 77.61,
+  },
+  item: {
+    description: 'Already paid parcel',
+    packageClass: 'SMALL' as const,
+    quantity: 1,
+  },
+  pickupReference: 'ORDER-123',
+  pickupInstructions: 'Collect from prepaid pickup counter',
+  itemAlreadyPaid: true as const,
 };

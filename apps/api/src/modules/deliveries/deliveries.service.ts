@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import {
+  Prisma,
+} from '@local-delivery/database';
+import {
   AssignmentStatus,
   Delivery,
   DeliveryItem,
@@ -50,9 +53,10 @@ export class DeliveriesService {
   ) {}
 
   createQuote(actor: User, input: CreateQuoteDto): DeliveryQuote | Promise<DeliveryQuote> {
-    if (input.type !== 'SEND') {
-      throw new ForbiddenError('Only SEND is enabled in the functional spine');
+    if (!['SEND', 'LIMITED_FETCH'].includes(input.type)) {
+      throw new ForbiddenError('Only SEND and LIMITED_FETCH are enabled for customer deliveries');
     }
+    this.assertLimitedFetchPolicy(input);
 
     if (this.prisma?.isEnabled()) {
       return this.createQuoteWithPrisma(actor, input);
@@ -78,7 +82,7 @@ export class DeliveriesService {
     const quote: DeliveryQuote = {
       id: this.store.createId('quote'),
       customerId: actor.id,
-      type: DeliveryType.SEND,
+      type: input.type === 'LIMITED_FETCH' ? DeliveryType.LIMITED_FETCH : DeliveryType.SEND,
       pickupAddressId: pickup.id,
       dropAddressId: drop.id,
       distanceMeters,
@@ -100,7 +104,7 @@ export class DeliveriesService {
     this.store.deliveryItems.set(quote.id, {
       id: this.store.createId('item'),
       deliveryId: quote.id,
-      ...input.item,
+      ...this.itemWithLimitedFetchNotes(input),
     });
 
     return quote;
@@ -129,7 +133,7 @@ export class DeliveriesService {
     const now = this.store.now();
     const delivery: Delivery = {
       id: this.store.createId('del'),
-      type: DeliveryType.SEND,
+      type: quote.type,
       status: DeliveryStatus.CONFIRMED,
       customerId: actor.id,
       quoteId: quote.id,
@@ -160,8 +164,8 @@ export class DeliveriesService {
     this.store.deliveries.set(delivery.id, delivery);
     this.store.payments.set(payment.id, payment);
     this.store.deliveryIdempotency.set(idempotencyScope, delivery.id);
-    this.store.writeHistory(delivery.id, DeliveryStatus.CONFIRMED, actor.id, 'Delivery created from quote');
-    this.store.writeAudit(actor.id, 'delivery.create', 'delivery', delivery.id);
+    this.store.writeHistory(delivery.id, DeliveryStatus.CONFIRMED, actor.id, `${delivery.type} delivery created from quote`);
+    this.store.writeAudit(actor.id, 'delivery.create', 'delivery', delivery.id, undefined, { type: delivery.type });
 
     return { delivery, payment };
   }
@@ -270,6 +274,7 @@ export class DeliveriesService {
   }
 
   private async createQuoteWithPrisma(actor: User, input: CreateQuoteDto): Promise<DeliveryQuote> {
+    this.assertLimitedFetchPolicy(input);
     const distanceMeters = Math.max(
       1000,
       this.distanceMeters(input.pickupAddress.lat, input.pickupAddress.lng, input.dropAddress.lat, input.dropAddress.lng),
@@ -303,7 +308,7 @@ export class DeliveriesService {
       });
       return tx.deliveryQuote.create({
         data: {
-          type: 'SEND',
+          type: input.type,
           customerId: actor.id,
           pickupAddressId: pickup.id,
           dropAddressId: drop.id,
@@ -317,6 +322,7 @@ export class DeliveriesService {
           platformFeeMinor,
           taxMinor,
           discountMinor,
+          metadata: this.quoteMetadata(input) as Prisma.InputJsonObject,
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
       });
@@ -357,7 +363,7 @@ export class DeliveriesService {
       return await this.prisma.$transaction(async (tx) => {
         const delivery = await tx.delivery.create({
           data: {
-            type: 'SEND',
+            type: quote.type,
             status: 'CONFIRMED',
             customerId: actor.id,
             quoteId: quote.id,
@@ -389,7 +395,7 @@ export class DeliveriesService {
             deliveryId: delivery.id,
             status: 'CONFIRMED',
             actorId: actor.id,
-            reason: 'Delivery created from quote',
+            reason: `${quote.type} delivery created from quote`,
           },
         });
         await tx.auditLog.create({
@@ -398,6 +404,7 @@ export class DeliveriesService {
             action: 'delivery.create',
             entityType: 'delivery',
             entityId: delivery.id,
+            metadata: { type: quote.type },
           },
         });
         await tx.idempotencyKey.create({
@@ -543,6 +550,42 @@ export class DeliveriesService {
     const delivery = this.store.deliveries.get(deliveryId);
     if (!delivery) throw new NotFoundError('Delivery not found');
     return delivery;
+  }
+
+  private assertLimitedFetchPolicy(input: CreateQuoteDto) {
+    if (input.type !== 'LIMITED_FETCH') return;
+    if (!input.pickupReference || !input.pickupInstructions || input.itemAlreadyPaid !== true) {
+      throw new ForbiddenError('LIMITED_FETCH requires known pickup reference, pickup instructions, and already-paid confirmation');
+    }
+  }
+
+  private itemWithLimitedFetchNotes(input: CreateQuoteDto) {
+    if (input.type !== 'LIMITED_FETCH') return input.item;
+    return {
+      ...input.item,
+      notes: [
+        input.item.notes,
+        `Pickup reference: ${input.pickupReference}`,
+        `Pickup instructions: ${input.pickupInstructions}`,
+        'Customer confirmed item is already paid or no payment is needed.',
+      ].filter(Boolean).join('\n'),
+    };
+  }
+
+  private quoteMetadata(input: CreateQuoteDto) {
+    if (input.type !== 'LIMITED_FETCH') {
+      return { item: input.item };
+    }
+    return {
+      item: input.item,
+      limitedFetch: {
+        pickupReference: input.pickupReference,
+        pickupInstructions: input.pickupInstructions,
+        itemAlreadyPaid: input.itemAlreadyPaid,
+        riderPaymentAllowed: false,
+        substitutionAllowed: false,
+      },
+    };
   }
 
   private distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number) {

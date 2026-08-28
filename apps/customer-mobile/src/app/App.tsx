@@ -11,6 +11,7 @@ export default function App() {
   const [quoteId, setQuoteId] = useState('');
   const [paymentId, setPaymentId] = useState('');
   const [deliveryId, setDeliveryId] = useState('');
+  const [deliveryType, setDeliveryType] = useState<'SEND' | 'LIMITED_FETCH'>('SEND');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Ready');
   const [output, setOutput] = useState('');
@@ -61,12 +62,7 @@ export default function App() {
   async function quote() {
     const result = await api('/deliveries/quote', {
       method: 'POST',
-      body: JSON.stringify({
-        type: 'SEND',
-        pickupAddress: { line1: 'MG Road', city: 'Bengaluru', lat: 12.9716, lng: 77.5946 },
-        dropAddress: { line1: 'Indiranagar', city: 'Bengaluru', lat: 12.9784, lng: 77.6408 },
-        item: { description: 'Documents', packageClass: 'SMALL', quantity: 1 },
-      }),
+      body: JSON.stringify(deliveryType === 'SEND' ? sendQuotePayload : limitedFetchQuotePayload),
     });
     setQuoteId(result.id);
   }
@@ -103,6 +99,11 @@ export default function App() {
       <Field label="Quote ID" value={quoteId} onChangeText={setQuoteId} />
       <Field label="Payment ID" value={paymentId} onChangeText={setPaymentId} />
       <Field label="Delivery ID" value={deliveryId} onChangeText={setDeliveryId} />
+
+      <View style={styles.modeRow}>
+        <Button title="SEND" disabled={busy || deliveryType === 'SEND'} onPress={() => setDeliveryType('SEND')} />
+        <Button title="LIMITED_FETCH" disabled={busy || deliveryType === 'LIMITED_FETCH'} onPress={() => setDeliveryType('LIMITED_FETCH')} />
+      </View>
 
       <View style={styles.actions}>
         <Button title="1. Login" disabled={busy} onPress={() => runStep('Login', login)} />
@@ -167,6 +168,10 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   sectionTitle: {
     color: '#172033',
     fontSize: 16,
@@ -182,3 +187,20 @@ const styles = StyleSheet.create({
     padding: 12,
   },
 });
+
+const sendQuotePayload = {
+  type: 'SEND',
+  pickupAddress: { line1: 'MG Road', city: 'Bengaluru', lat: 12.9716, lng: 77.5946 },
+  dropAddress: { line1: 'Indiranagar', city: 'Bengaluru', lat: 12.9784, lng: 77.6408 },
+  item: { description: 'Documents', packageClass: 'SMALL', quantity: 1 },
+};
+
+const limitedFetchQuotePayload = {
+  type: 'LIMITED_FETCH',
+  pickupAddress: { line1: 'Known Pickup Counter', city: 'Bengaluru', lat: 12.9716, lng: 77.5946 },
+  dropAddress: { line1: 'Home Drop', city: 'Bengaluru', lat: 12.98, lng: 77.61 },
+  item: { description: 'Already paid parcel', packageClass: 'SMALL', quantity: 1 },
+  pickupReference: 'ORDER-123',
+  pickupInstructions: 'Collect from prepaid pickup counter',
+  itemAlreadyPaid: true,
+};

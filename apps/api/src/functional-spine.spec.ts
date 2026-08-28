@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
+import { quoteDeliverySchema } from '@local-delivery/validation';
 import { DispatchQueueService } from './modules/dispatch/dispatch.queue';
 import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
@@ -208,7 +209,40 @@ runInMemory('functional SEND spine', () => {
     const accepted = riders.accept(rider, assignmentId);
     riders.arrivedPickup(rider, accepted.assignment.id);
 
-    expect(() => riders.pickedUp(rider, accepted.assignment.id)).toThrow('Pickup proof is required for business deliveries');
+    expect(() => riders.pickedUp(rider, accepted.assignment.id)).toThrow('Pickup proof is required for this delivery type');
+  });
+
+  it('creates prepaid LIMITED_FETCH and dispatches after payment', () => {
+    const { deliveries, payments, customer, rider } = setup();
+    const quote = deliveries.createQuote(customer, limitedFetchInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'limited-fetch-001' });
+
+    expect(quote.type).toBe(DeliveryType.LIMITED_FETCH);
+    expect(created.delivery.type).toBe(DeliveryType.LIMITED_FETCH);
+    expect(created.payment.status).toBe('PENDING');
+
+    const paid = payments.confirmMockPayment(customer, created.payment.id, 'evt-limited-fetch-001');
+    expect(paid.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
+  });
+
+  it('requires pickup proof for LIMITED_FETCH deliveries', () => {
+    const { deliveries, payments, riders, customer, rider } = setup();
+    const quote = deliveries.createQuote(customer, limitedFetchInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'limited-fetch-002' });
+    const paid = payments.confirmMockPayment(customer, created.payment.id, 'evt-limited-fetch-002');
+    const accepted = riders.accept(rider, paid.dispatch!.offeredAssignment!.id);
+    riders.arrivedPickup(rider, accepted.assignment.id);
+
+    expect(() => riders.pickedUp(rider, accepted.assignment.id)).toThrow('Pickup proof is required for this delivery type');
+  });
+
+  it('rejects rider-funded purchase fields for LIMITED_FETCH quotes', () => {
+    const result = quoteDeliverySchema.safeParse({
+      ...limitedFetchInput,
+      riderPaymentAmountMinor: 50000,
+    });
+
+    expect(result.success).toBe(false);
   });
 });
 
@@ -249,4 +283,28 @@ const businessDeliveryInput = {
     packageClass: 'SMALL' as const,
     quantity: 1,
   },
+};
+
+const limitedFetchInput = {
+  type: 'LIMITED_FETCH' as const,
+  pickupAddress: {
+    line1: 'Known Pickup Counter',
+    city: 'Bengaluru',
+    lat: 12.9716,
+    lng: 77.5946,
+  },
+  dropAddress: {
+    line1: 'Home Drop',
+    city: 'Bengaluru',
+    lat: 12.98,
+    lng: 77.61,
+  },
+  item: {
+    description: 'Already paid parcel',
+    packageClass: 'SMALL' as const,
+    quantity: 1,
+  },
+  pickupReference: 'ORDER-123',
+  pickupInstructions: 'Collect from prepaid pickup counter',
+  itemAlreadyPaid: true as const,
 };

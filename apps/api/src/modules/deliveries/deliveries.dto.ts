@@ -1,5 +1,5 @@
 export interface CreateQuoteDto {
-  type: 'SEND';
+  type: 'SEND' | 'LIMITED_FETCH';
   pickupAddress: {
     label?: string;
     line1: string;
@@ -22,6 +22,9 @@ export interface CreateQuoteDto {
     declaredValueMinor?: number;
     notes?: string;
   };
+  pickupReference?: string;
+  pickupInstructions?: string;
+  itemAlreadyPaid?: true;
 }
 
 export interface CreateDeliveryDto {

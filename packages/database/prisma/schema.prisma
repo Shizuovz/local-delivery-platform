@@ -240,6 +240,7 @@ model DeliveryQuote {
   platformFeeMinor    Int
   taxMinor            Int
   discountMinor       Int
+  metadata            Json?
   expiresAt           DateTime
   confirmedAt         DateTime?
   delivery            Delivery?
