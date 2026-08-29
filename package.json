@@ -16,6 +16,7 @@
     "db:generate": "npm --workspace packages/database run prisma:generate",
     "db:push": "npm --workspace packages/database run prisma:push",
     "db:seed": "npm --workspace packages/database run prisma:seed",
+    "db:reset": "npm --workspace packages/database run prisma:reset",
     "test": "npm --workspaces --if-present run test",
     "typecheck": "npm --workspaces --if-present run typecheck",
     "lint": "npm --workspaces --if-present run lint"

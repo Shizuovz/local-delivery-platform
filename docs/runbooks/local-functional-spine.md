@@ -90,6 +90,14 @@ npm --workspace packages/database run prisma:seed
 npm run dev:api
 ```
 
+If local verification data has accumulated and the admin board is noisy, use the explicit reset command before seeding-dependent workflow checks:
+
+```bash
+npm run db:reset
+```
+
+This drops local PostgreSQL data, reapplies the Prisma schema, and runs the seed. Use it only for local development databases.
+
 Then check:
 
 ```text

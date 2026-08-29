@@ -8,6 +8,7 @@
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "prisma:push": "prisma db push --schema prisma/schema.prisma",
+    "prisma:reset": "prisma db push --force-reset --schema prisma/schema.prisma && prisma db seed --schema prisma/schema.prisma",
     "prisma:seed": "prisma db seed --schema prisma/schema.prisma",
     "typecheck": "tsc --noEmit"
   },
