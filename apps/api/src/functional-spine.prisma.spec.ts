@@ -11,7 +11,7 @@ import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
 import { PaymentsService } from './modules/payments/payments.service';
 import { RidersService } from './modules/riders/riders.service';
-import { DeliveryStatus } from '@local-delivery/types';
+import { AssignmentStatus, DeliveryStatus, PaymentStatus, RefundStatus, RiderAvailabilityStatus } from '@local-delivery/types';
 
 const runPrisma = process.env.PERSISTENCE_MODE === 'prisma' ? describe : describe.skip;
 
@@ -47,7 +47,7 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const riders = new RidersService(store, deliveries, dispatch, prisma);
   const actors = new ActorService(store, prisma);
   const auth = new AuthService(store, prisma);
-  const adminService = new AdminService(store, dispatch, prisma);
+  const adminService = new AdminService(store, dispatch, prisma, deliveries);
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -94,6 +94,115 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     expect(timeline.history.map((event) => event.status)).toContain('DELIVERED');
     expect(timeline.proofs.length).toBeGreaterThan(0);
     expect(timeline.audits.length).toBeGreaterThan(0);
+  });
+
+  it('handles signed mock payment webhooks idempotently', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const created = await createConfirmedDelivery(customer);
+
+    const webhook = await payments.handleMockWebhook('dev-mock-payment-secret', {
+      providerEventId: `evt-webhook-${created.delivery.id}`,
+      providerRef: created.payment.providerRef,
+      status: 'PAID',
+      amountMinor: created.payment.amountMinor,
+      currency: created.payment.currency,
+    });
+    const duplicate = await payments.handleMockWebhook('dev-mock-payment-secret', {
+      providerEventId: `evt-webhook-${created.delivery.id}`,
+      providerRef: created.payment.providerRef,
+      status: 'PAID',
+      amountMinor: created.payment.amountMinor,
+      currency: created.payment.currency,
+    });
+
+    expect(webhook.payment.status).toBe(PaymentStatus.PAID);
+    expect(webhook.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
+    expect(duplicate.duplicate).toBe(true);
+  });
+
+  it('refunds paid prepaid cancellation before pickup', async () => {
+    const customer = await createCustomer();
+    const created = await createConfirmedDelivery(customer);
+    await payments.confirmMockPayment(customer, created.payment.id, `evt-cancel-refund-${created.delivery.id}`);
+
+    const cancelled = await deliveries.cancel(customer, created.delivery.id, 'customer cancelled before pickup');
+    const payment = await prisma.payment.findUniqueOrThrow({
+      where: { id: created.payment.id },
+      include: { refunds: true },
+    });
+
+    expect(cancelled.status).toBe(DeliveryStatus.CANCELLED);
+    expect(payment.status).toBe(PaymentStatus.REFUNDED);
+    expect(payment.refunds).toHaveLength(1);
+    expect(payment.refunds[0]).toEqual(expect.objectContaining({
+      amountMinor: created.payment.amountMinor,
+      status: RefundStatus.SUCCEEDED,
+    }));
+  });
+
+  it('lets admin cancel paid deliveries with audited refund reconciliation', async () => {
+    const customer = await createCustomer();
+    const admin = await adminActor();
+    const created = await createConfirmedDelivery(customer);
+    await payments.confirmMockPayment(customer, created.payment.id, `evt-admin-cancel-refund-${created.delivery.id}`);
+
+    const cancelled = await adminService.cancelDelivery(admin, created.delivery.id, 'support approved cancellation');
+    const payment = await prisma.payment.findUniqueOrThrow({
+      where: { id: created.payment.id },
+      include: { refunds: true },
+    });
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'refund.mock_succeeded', reason: 'support approved cancellation' },
+    });
+
+    expect(cancelled.status).toBe(DeliveryStatus.CANCELLED);
+    expect(payment.status).toBe(PaymentStatus.REFUNDED);
+    expect(payment.refunds).toHaveLength(1);
+    expect(audit).toBeTruthy();
+  });
+
+  it('lets admin suspend a rider and cancel their open offers', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const admin = await adminActor();
+    const created = await createConfirmedDelivery(customer);
+    const offer = (await dispatch.dispatchDelivery(created.delivery.id)).offeredAssignment!;
+
+    const updated = await adminService.updateRiderStatus(admin, rider.id, { suspended: true }, 'documents expired');
+    const assignment = await prisma.assignment.findUniqueOrThrow({ where: { id: offer.id } });
+
+    expect(updated.suspended).toBe(true);
+    expect(updated.availabilityStatus).toBe(RiderAvailabilityStatus.SUSPENDED);
+    expect(assignment.status).toBe(AssignmentStatus.CANCELLED);
+    await expect(riders.accept(rider, offer.id)).rejects.toThrow('Assignment is CANCELLED');
+  });
+
+  it('lets admin suspend a business and block new delivery creation', async () => {
+    const admin = await adminActor();
+    const { owner, business } = await createApprovedBusiness('POSTPAID');
+
+    const updated = await adminService.updateBusinessStatus(admin, business.id, 'SUSPENDED', 'compliance review');
+
+    expect(updated.status).toBe('SUSPENDED');
+    await expect(businesses.createDelivery(owner, {
+      businessId: business.id,
+      idempotencyKey: `business-after-suspension-${Date.now()}`,
+      ...businessDeliveryInput,
+    })).rejects.toThrow('Business is not approved');
+  });
+
+  it('lets admin mark an exception and resolve the support ticket', async () => {
+    const customer = await createCustomer();
+    const admin = await adminActor();
+    const created = await createConfirmedDelivery(customer);
+
+    const exception = await adminService.markDeliveryException(admin, created.delivery.id, 'customer address unclear');
+    const tickets = await adminService.listSupportTickets(admin);
+    const resolved = await adminService.updateSupportTicket(admin, exception.supportTicket.id, 'RESOLVED', 'customer confirmed address');
+
+    expect(tickets.some((ticket) => ticket.id === exception.supportTicket.id)).toBe(true);
+    expect(resolved.status).toBe('RESOLVED');
   });
 
   it('enforces object-level authorization for customer delivery reads', async () => {
@@ -297,6 +406,11 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   async function demoRiderActor() {
     const rider = await prisma.user.findUniqueOrThrow({ where: { phone: '+910000000002' } });
     return actors.requireActor(rider.id);
+  }
+
+  async function adminActor() {
+    const admin = await prisma.user.findUniqueOrThrow({ where: { phone: '+910000000001' } });
+    return actors.requireActor(admin.id);
   }
 
   async function resetRiders() {

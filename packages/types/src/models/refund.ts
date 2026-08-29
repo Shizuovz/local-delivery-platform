@@ -6,4 +6,8 @@ export interface Refund {
   amountMinor: number;
   status: RefundStatus;
   reason: string;
+  idempotencyKey?: string;
+  providerRefundRef?: string;
+  requestedBy?: string;
+  processedAt?: string;
 }

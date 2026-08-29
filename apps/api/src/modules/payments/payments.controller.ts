@@ -1,7 +1,8 @@
-import { Body, Controller, Post } from '@nestjs/common';
-import { mockPaymentConfirmSchema } from '@local-delivery/validation';
+import { Body, Controller, Headers, Post } from '@nestjs/common';
+import { mockPaymentConfirmSchema, mockPaymentWebhookSchema } from '@local-delivery/validation';
 import { User } from '@local-delivery/types';
 import { CurrentUser } from '../../common/current-user.decorator';
+import { Public } from '../../common/public.decorator';
 import { RateLimit } from '../../common/rate-limit.decorator';
 import { PaymentsService } from './payments.service';
 
@@ -14,5 +15,13 @@ export class PaymentsController {
   async confirm(@CurrentUser() actor: User, @Body() body: unknown) {
     const input = mockPaymentConfirmSchema.parse(body);
     return this.paymentsService.confirmMockPayment(actor, input.paymentId, input.providerEventId);
+  }
+
+  @Public()
+  @Post('webhooks/mock')
+  @RateLimit({ key: 'payments.mock_webhook', limit: 120, windowMs: 60 * 1000 })
+  async mockWebhook(@Headers('x-mock-payment-signature') signature: string | undefined, @Body() body: unknown) {
+    const input = mockPaymentWebhookSchema.parse(body);
+    return this.paymentsService.handleMockWebhook(signature, input);
   }
 }

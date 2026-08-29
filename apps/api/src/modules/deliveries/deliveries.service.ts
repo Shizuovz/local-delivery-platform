@@ -11,6 +11,8 @@ import {
   DeliveryType,
   PaymentStatus,
   Payment,
+  Refund,
+  RefundStatus,
   TERMINAL_DELIVERY_STATUSES,
   User,
 } from '@local-delivery/types';
@@ -237,7 +239,9 @@ export class DeliveriesService {
       assignment.status = AssignmentStatus.CANCELLED;
     }
     this.store.writeAudit(actor.id, 'delivery.cancel', 'delivery', delivery.id, reason);
-    return this.transition(delivery.id, DeliveryStatus.CANCELLED, actor.id, reason);
+    const cancelled = this.transition(delivery.id, DeliveryStatus.CANCELLED, actor.id, reason);
+    this.reconcileCancellationPaymentFromMemory(actor, detail.payment, delivery.id, reason);
+    return cancelled;
   }
 
   async trackingForActor(actor: User, deliveryId: string) {
@@ -448,7 +452,7 @@ export class DeliveriesService {
       where: { id: deliveryId },
       include: {
         quote: true,
-        payments: true,
+        payments: { include: { refunds: true } },
         assignments: true,
         proofs: true,
         history: { orderBy: { timestamp: 'asc' } },
@@ -543,7 +547,104 @@ export class DeliveriesService {
         reason,
       },
     });
-    return this.transitionWithPrisma(delivery.id, DeliveryStatus.CANCELLED, actor.id, reason);
+    const cancelled = await this.transitionWithPrisma(delivery.id, DeliveryStatus.CANCELLED, actor.id, reason);
+    await this.reconcileCancellationPaymentWithPrisma(actor, detail.payment, delivery.id, reason);
+    return cancelled;
+  }
+
+  private reconcileCancellationPaymentFromMemory(actor: User, payment: Payment | undefined, deliveryId: string, reason: string) {
+    if (!payment) return;
+    if (payment.status === PaymentStatus.PENDING || payment.status === PaymentStatus.CREATED) {
+      payment.status = PaymentStatus.FAILED;
+      this.store.writeAudit(actor.id, 'payment.cancel_unpaid', 'payment', payment.id, reason, { deliveryId });
+      return;
+    }
+    if (payment.status !== PaymentStatus.PAID) return;
+
+    const idempotencyKey = `delivery-cancel:${deliveryId}:full-refund`;
+    const existingRefundId = this.store.refundIdempotency.get(idempotencyKey);
+    if (existingRefundId) {
+      return;
+    }
+
+    const refund: Refund = {
+      id: this.store.createId('refund'),
+      paymentId: payment.id,
+      amountMinor: payment.amountMinor,
+      status: RefundStatus.SUCCEEDED,
+      reason,
+      idempotencyKey,
+      providerRefundRef: `mock_refund_${payment.id}`,
+      requestedBy: actor.id,
+      processedAt: this.store.now(),
+    };
+    this.store.refunds.set(refund.id, refund);
+    this.store.refundIdempotency.set(idempotencyKey, refund.id);
+    payment.status = PaymentStatus.REFUNDED;
+    this.store.writeAudit(actor.id, 'refund.mock_succeeded', 'refund', refund.id, reason, {
+      deliveryId,
+      paymentId: payment.id,
+      amountMinor: refund.amountMinor,
+    });
+  }
+
+  private async reconcileCancellationPaymentWithPrisma(actor: User, payment: Payment | undefined, deliveryId: string, reason: string) {
+    if (!payment) return;
+    if (payment.status === PaymentStatus.PENDING || payment.status === PaymentStatus.CREATED) {
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'FAILED' },
+      });
+      await this.prisma.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: 'payment.cancel_unpaid',
+          entityType: 'payment',
+          entityId: payment.id,
+          reason,
+          metadata: { deliveryId },
+        },
+      });
+      return;
+    }
+    if (payment.status !== PaymentStatus.PAID) return;
+
+    const idempotencyKey = `delivery-cancel:${deliveryId}:full-refund`;
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.refund.findUnique({ where: { idempotencyKey } });
+      if (existing) return;
+
+      const refund = await tx.refund.create({
+        data: {
+          paymentId: payment.id,
+          amountMinor: payment.amountMinor,
+          status: 'SUCCEEDED',
+          reason,
+          idempotencyKey,
+          providerRefundRef: `mock_refund_${payment.id}`,
+          requestedBy: actor.id,
+          processedAt: new Date(),
+        },
+      });
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { status: 'REFUNDED' },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: 'refund.mock_succeeded',
+          entityType: 'refund',
+          entityId: refund.id,
+          reason,
+          metadata: {
+            deliveryId,
+            paymentId: payment.id,
+            amountMinor: refund.amountMinor,
+          },
+        },
+      });
+    });
   }
 
   private getDelivery(deliveryId: string) {

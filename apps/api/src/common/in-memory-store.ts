@@ -14,6 +14,7 @@ import {
   Payment,
   PaymentStatus,
   Proof,
+  Refund,
   RiderAvailabilityStatus,
   RiderLocation,
   RiderProfile,
@@ -46,6 +47,8 @@ export class InMemoryStore {
   readonly deliveryIdempotency = new Map<string, string>();
   readonly payments = new Map<string, Payment>();
   readonly paymentEvents = new Set<string>();
+  readonly refunds = new Map<string, Refund>();
+  readonly refundIdempotency = new Map<string, string>();
   readonly assignments = new Map<string, Assignment>();
   readonly proofs = new Map<string, Proof>();
   readonly supportTickets = new Map<string, SupportTicket>();

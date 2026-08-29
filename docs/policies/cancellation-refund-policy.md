@@ -20,7 +20,7 @@ This policy gives the API and admin console a safe default for cancellation/refu
 | --- | --- | --- |
 | Before payment | `DRAFT`, `QUOTED` | Cancel with no refund. |
 | After payment, before rider assignment | `CONFIRMED`, `SEARCHING_RIDER` | Cancel delivery and initiate eligible refund. |
-| Rider assigned before pickup | `RIDER_ASSIGNED`, `EN_ROUTE_PICKUP`, `ARRIVED_PICKUP` | Cancel with possible fee; admin reason required if manual. |
+| Rider assigned before pickup | `RIDER_ASSIGNED`, `EN_ROUTE_PICKUP`, `ARRIVED_PICKUP` | Cancel delivery and initiate eligible refund in local v1; fee/rider compensation rules must be finalized before launch. |
 | After pickup | `PICKED_UP`, `EN_ROUTE_DROP`, `ARRIVED_DROP` | Move to `RETURN_REQUIRED` unless admin marks exception. |
 | Delivered | `DELIVERED` | No normal cancellation; use support/dispute flow. |
 | Failed/returned/disputed | `FAILED`, `RETURNED`, `DISPUTED` | Admin/support decides refund or adjustment. |
@@ -32,6 +32,8 @@ This policy gives the API and admin console a safe default for cancellation/refu
 - Payment state must remain consistent with refund state.
 - Refunds must store reason, amount, provider reference when available, actor, and audit log.
 - Partial refunds must store every component separately so margin remains calculable.
+- Local mock refunds are marked `SUCCEEDED` immediately and move payment to `REFUNDED`.
+- Cancelling an unpaid `CREATED` or `PENDING` payment marks the payment `FAILED` so it cannot be charged later.
 
 ## Admin Requirements
 

@@ -44,9 +44,10 @@ If duplicate handling fails, stop manual retries and escalate to engineering.
 ## Cancelled After Payment
 
 1. Confirm cancellation stage from cancellation/refund policy.
-2. If refund is eligible, create refund request when backend refund flow exists.
-3. Do not change payment to `REFUNDED` without provider confirmation.
-4. Record reason and audit log.
+2. Confirm whether the backend created an idempotent refund record.
+3. In local mock mode, `SUCCEEDED` refund records move payment to `REFUNDED` immediately.
+4. For a real provider, do not change payment to `REFUNDED` without provider confirmation.
+5. Record reason and audit log.
 
 ## Provider Signature Failure
 

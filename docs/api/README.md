@@ -16,6 +16,7 @@ Public endpoints:
 
 - `POST /auth/request-otp`
 - `POST /auth/verify-otp`
+- `POST /payments/webhooks/mock`
 - `GET /health`
 
 Protected endpoints require:
@@ -122,6 +123,25 @@ POST /payments/mock/confirm
 }
 ```
 
+### Mock Payment Webhook
+
+```http
+POST /payments/webhooks/mock
+x-mock-payment-signature: dev-mock-payment-secret
+```
+
+```json
+{
+  "providerEventId": "unique-provider-event-id",
+  "providerRef": "mock_delivery_uuid",
+  "status": "PAID",
+  "amountMinor": 8500,
+  "currency": "INR"
+}
+```
+
+The mock webhook is public from the auth guard perspective but must include the mock signature header. Duplicate `providerEventId` values are idempotent.
+
 ### Tracking
 
 ```http
@@ -149,6 +169,13 @@ Delivery completion requires OTP, photo URL, or signature URL.
 - `GET /admin/deliveries/:id/timeline`
 - `POST /admin/deliveries/:id/assign`
 - `POST /admin/deliveries/:id/reassign`
+- `POST /admin/deliveries/:id/cancel`
+- `POST /admin/deliveries/:id/mark-exception`
+- `POST /admin/riders/:id/approve`
+- `PATCH /admin/riders/:id/status`
+- `PATCH /admin/businesses/:id/status`
+- `GET /admin/support/tickets`
+- `PATCH /admin/support/tickets/:id`
 - `GET /admin/audit-logs`
 
 Admin assign/reassign requests must include:
@@ -160,21 +187,66 @@ Admin assign/reassign requests must include:
 }
 ```
 
+Admin cancellation, exception, approval, suspension, and support-ticket updates must include a reason:
+
+```json
+{
+  "reason": "Operational recovery note"
+}
+```
+
+Admin rider status updates accept:
+
+```json
+{
+  "approvalStatus": "APPROVED",
+  "suspended": false,
+  "reason": "Documents verified"
+}
+```
+
+Admin business status updates accept:
+
+```json
+{
+  "status": "SUSPENDED",
+  "reason": "Compliance review"
+}
+```
+
+Support-ticket updates accept:
+
+```json
+{
+  "status": "RESOLVED",
+  "reason": "Customer confirmed address"
+}
+```
+
 ## Current Scope
 
 Implemented for the functional spine:
 
 - Customer `SEND`
-- Mock prepaid payment
+- Customer `LIMITED_FETCH`
+- Business `BUSINESS_DELIVERY`
+- Mock prepaid payment confirm
+- Signed mock payment webhook handling
+- Idempotent payment event storage
+- Basic cancellation/refund reconciliation
 - Direct dispatch by default
 - Redis/BullMQ queued dispatch behind `DISPATCH_QUEUE_MODE=bullmq`
 - Rider accept and lifecycle
 - Admin delivery board/timeline/manual assignment
+- Admin cancellation with refund reconciliation
+- Admin rider approval/suspension controls
+- Admin business approval/suspension controls
+- Admin support-ticket list/status controls
 
 Not yet implemented:
 
-- Real payment provider webhook signature verification
-- `BUSINESS_DELIVERY`
-- `LIMITED_FETCH`
-- Full Redis/BullMQ retry/radius expansion/admin-attention policy
+- Real payment provider integration
+- Real provider refund API calls
+- Full pricing/service-zone admin configuration
+- Full admin reports and payment/refund monitoring screens
 - Signed proof/document URLs

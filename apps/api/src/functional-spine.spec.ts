@@ -6,9 +6,10 @@ import { DispatchQueueService } from './modules/dispatch/dispatch.queue';
 import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
 import { BusinessesService } from './modules/businesses/businesses.service';
+import { AdminService } from './modules/admin/admin.service';
 import { PaymentsService } from './modules/payments/payments.service';
 import { RidersService } from './modules/riders/riders.service';
-import { AssignmentStatus, DeliveryStatus, DeliveryType, RiderAvailabilityStatus } from '@local-delivery/types';
+import { AssignmentStatus, DeliveryStatus, DeliveryType, PaymentStatus, RefundStatus, RiderAvailabilityStatus } from '@local-delivery/types';
 
 const runInMemory = process.env.PERSISTENCE_MODE === 'prisma' ? describe.skip : describe;
 
@@ -20,13 +21,14 @@ function setup() {
   const deliveries = new DeliveriesService(store, dispatch, prisma);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
   const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
+  const adminService = new AdminService(store, dispatch, prisma, deliveries);
   const riders = new RidersService(store, deliveries, dispatch, prisma);
   const customer = store.findOrCreateUser('+919999999999', ['CUSTOMER']);
   const rider = [...store.users.values()].find((user) => user.roles.includes('RIDER'))!;
   const admin = [...store.users.values()].find((user) => user.roles.includes('OPS_ADMIN'))!;
   const businessUser = [...store.users.values()].find((user) => user.roles.includes('BUSINESS'))!;
   const business = [...store.businesses.values()][0];
-  return { store, dispatch, deliveries, payments, businesses, riders, customer, rider, admin, businessUser, business };
+  return { store, dispatch, deliveries, payments, businesses, adminService, riders, customer, rider, admin, businessUser, business };
 }
 
 const quoteInput = {
@@ -102,6 +104,119 @@ runInMemory('functional SEND spine', () => {
     const duplicate = payments.confirmMockPayment(customer, created.payment.id, 'evt-dup');
 
     expect(duplicate.duplicate).toBe(true);
+  });
+
+  it('handles signed mock payment webhooks idempotently and dispatches paid deliveries', () => {
+    const { deliveries, payments, customer, rider } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'send-webhook-001' });
+
+    const webhook = payments.handleMockWebhook('dev-mock-payment-secret', {
+      providerEventId: 'evt-webhook-001',
+      providerRef: created.payment.providerRef,
+      status: 'PAID',
+      amountMinor: created.payment.amountMinor,
+      currency: created.payment.currency,
+    });
+    const duplicate = payments.handleMockWebhook('dev-mock-payment-secret', {
+      providerEventId: 'evt-webhook-001',
+      providerRef: created.payment.providerRef,
+      status: 'PAID',
+      amountMinor: created.payment.amountMinor,
+      currency: created.payment.currency,
+    });
+
+    expect(webhook.payment.status).toBe(PaymentStatus.PAID);
+    expect(webhook.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
+    expect(duplicate.duplicate).toBe(true);
+  });
+
+  it('rejects mock payment webhooks with an invalid signature', () => {
+    const { deliveries, payments, customer } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'send-webhook-bad-signature' });
+
+    expect(() => payments.handleMockWebhook('bad-signature', {
+      providerEventId: 'evt-webhook-bad-signature',
+      providerRef: created.payment.providerRef,
+      status: 'PAID',
+      amountMinor: created.payment.amountMinor,
+      currency: created.payment.currency,
+    })).toThrow('Invalid payment webhook signature');
+  });
+
+  it('refunds paid prepaid delivery cancellation before pickup', () => {
+    const { store, deliveries, payments, customer } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'send-cancel-refund' });
+    const paid = payments.confirmMockPayment(customer, created.payment.id, 'evt-cancel-refund');
+
+    const cancelled = deliveries.cancel(customer, created.delivery.id, 'customer cancelled before pickup');
+    const refunds = [...store.refunds.values()].filter((refund) => refund.paymentId === created.payment.id);
+
+    expect(cancelled.status).toBe(DeliveryStatus.CANCELLED);
+    expect(paid.payment.status).toBe(PaymentStatus.REFUNDED);
+    expect(refunds).toHaveLength(1);
+    expect(refunds[0]).toEqual(expect.objectContaining({
+      amountMinor: created.payment.amountMinor,
+      status: RefundStatus.SUCCEEDED,
+    }));
+  });
+
+  it('lets admin cancel paid deliveries with audited refund reconciliation', () => {
+    const { store, deliveries, payments, adminService, customer, admin } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'admin-cancel-refund' });
+    payments.confirmMockPayment(customer, created.payment.id, 'evt-admin-cancel-refund');
+
+    const cancelled = adminService.cancelDelivery(admin, created.delivery.id, 'support approved cancellation');
+
+    expect(cancelled.status).toBe(DeliveryStatus.CANCELLED);
+    expect(store.payments.get(created.payment.id)?.status).toBe(PaymentStatus.REFUNDED);
+    expect([...store.refunds.values()]).toEqual([
+      expect.objectContaining({ paymentId: created.payment.id, status: RefundStatus.SUCCEEDED }),
+    ]);
+    expect(store.auditLogs.some((log) => log.action === 'refund.mock_succeeded' && log.reason === 'support approved cancellation')).toBe(true);
+  });
+
+  it('lets admin suspend a rider and cancel their open offers', () => {
+    const { store, deliveries, dispatch, adminService, riders, customer, rider, admin } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'admin-suspend-rider' });
+    const offer = dispatch.dispatchDelivery(created.delivery.id).offeredAssignment!;
+
+    const updated = adminService.updateRiderStatus(admin, rider.id, { suspended: true }, 'documents expired');
+
+    expect(updated.suspended).toBe(true);
+    expect(updated.availabilityStatus).toBe(RiderAvailabilityStatus.SUSPENDED);
+    expect(store.assignments.get(offer.id)?.status).toBe(AssignmentStatus.CANCELLED);
+    expect(() => riders.accept(rider, offer.id)).toThrow('Assignment is CANCELLED');
+  });
+
+  it('lets admin suspend a business and block new delivery creation', () => {
+    const { businesses, adminService, businessUser, business, admin } = setup();
+
+    const updated = adminService.updateBusinessStatus(admin, business.id, 'SUSPENDED', 'compliance review');
+
+    expect(updated.status).toBe('SUSPENDED');
+    expect(() => businesses.createDelivery(businessUser, {
+      businessId: business.id,
+      idempotencyKey: 'business-after-suspension',
+      ...businessDeliveryInput,
+    })).toThrow('Business is not approved');
+  });
+
+  it('lets admin mark an exception and resolve the support ticket', () => {
+    const { deliveries, adminService, customer, admin } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'admin-exception' });
+
+    const exception = adminService.markDeliveryException(admin, created.delivery.id, 'customer address unclear');
+    const tickets = adminService.listSupportTickets(admin);
+    const resolved = adminService.updateSupportTicket(admin, exception.supportTicket.id, 'RESOLVED', 'customer confirmed address');
+
+    expect(tickets.some((ticket) => ticket.id === exception.supportTicket.id)).toBe(true);
+    expect(resolved.status).toBe('RESOLVED');
   });
 
   it('expires an offer and retries the next eligible rider', () => {
