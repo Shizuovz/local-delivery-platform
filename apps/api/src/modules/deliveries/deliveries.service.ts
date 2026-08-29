@@ -13,11 +13,13 @@ import {
   Payment,
   Refund,
   RefundStatus,
+  Proof,
   TERMINAL_DELIVERY_STATUSES,
   User,
 } from '@local-delivery/types';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../common/domain-errors';
 import { InMemoryStore } from '../../common/in-memory-store';
+import { signProofFileUrl } from '../../common/proof-file-signing';
 import { PrismaService } from '../../common/prisma.service';
 import { DispatchService } from '../dispatch/dispatch.service';
 import { CreateDeliveryDto, CreateQuoteDto } from './deliveries.dto';
@@ -199,7 +201,9 @@ export class DeliveriesService {
         quote: this.store.quotes.get(delivery.quoteId),
         payment: delivery.paymentId ? this.store.payments.get(delivery.paymentId) : undefined,
         assignments: [...this.store.assignments.values()].filter((assignment) => assignment.deliveryId === delivery.id),
-        proofs: [...this.store.proofs.values()].filter((proof) => proof.deliveryId === delivery.id),
+        proofs: [...this.store.proofs.values()]
+          .filter((proof) => proof.deliveryId === delivery.id)
+          .map((proof) => this.toProof(proof)),
         history: this.store.history.filter((event) => event.deliveryId === delivery.id),
       };
     }
@@ -482,14 +486,15 @@ export class DeliveriesService {
         expiresAt: assignment.expiresAt?.toISOString(),
         acceptedAt: assignment.acceptedAt?.toISOString(),
       })),
-      proofs: detail.proofs.map((proof) => ({
+      proofs: detail.proofs.map((proof) => this.toProof({
         id: proof.id,
         deliveryId: proof.deliveryId,
-        type: proof.type,
+        type: proof.type as Proof['type'],
         createdBy: proof.createdBy,
         fileUrl: proof.fileUrl ?? undefined,
         otpVerified: proof.otpVerified,
         metadata: proof.metadata as Record<string, unknown> | undefined,
+        retentionExpiresAt: proof.retentionExpiresAt?.toISOString(),
         createdAt: proof.createdAt.toISOString(),
       })),
       history: detail.history.map((event) => ({
@@ -787,6 +792,14 @@ export class DeliveriesService {
       amountMinor: payment.amountMinor,
       currency: payment.currency,
       status: payment.status as PaymentStatus,
+    };
+  }
+
+  private toProof(proof: Proof): Proof {
+    const { fileUrl, ...safeProof } = proof;
+    return {
+      ...safeProof,
+      signedUrl: fileUrl ? signProofFileUrl(proof.id) : undefined,
     };
   }
 }

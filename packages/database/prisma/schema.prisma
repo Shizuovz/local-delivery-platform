@@ -291,16 +291,20 @@ model RiderLocation {
 }
 
 model Proof {
-  id          String   @id @default(uuid())
-  deliveryId  String
-  delivery    Delivery @relation(fields: [deliveryId], references: [id])
-  type        String
-  createdBy   String
-  creator     User     @relation("ProofCreator", fields: [createdBy], references: [id])
-  fileUrl     String?
-  otpVerified Boolean  @default(false)
-  metadata    Json?
-  createdAt   DateTime @default(now())
+  id                 String    @id @default(uuid())
+  deliveryId         String
+  delivery           Delivery  @relation(fields: [deliveryId], references: [id])
+  type               String
+  createdBy          String
+  creator            User      @relation("ProofCreator", fields: [createdBy], references: [id])
+  fileUrl            String?
+  otpVerified        Boolean   @default(false)
+  metadata           Json?
+  retentionExpiresAt DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@index([deliveryId, createdAt])
+  @@index([retentionExpiresAt])
 }
 
 model Payment {

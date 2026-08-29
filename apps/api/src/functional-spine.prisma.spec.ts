@@ -10,6 +10,7 @@ import { DispatchQueueService } from './modules/dispatch/dispatch.queue';
 import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
 import { PaymentsService } from './modules/payments/payments.service';
+import { ProofsService } from './modules/proofs/proofs.service';
 import { RidersService } from './modules/riders/riders.service';
 import { AssignmentStatus, DeliveryStatus, PaymentStatus, RefundStatus, RiderAvailabilityStatus } from '@local-delivery/types';
 
@@ -43,6 +44,7 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const dispatch = new DispatchService(store, prisma);
   const deliveries = new DeliveriesService(store, dispatch, prisma);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
+  const proofsService = new ProofsService(store, prisma);
   const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
   const riders = new RidersService(store, deliveries, dispatch, prisma);
   const actors = new ActorService(store, prisma);
@@ -162,6 +164,19 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     expect(audit).toBeTruthy();
   });
 
+  it('lets admin assign the rider already holding the active offer', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const admin = await adminActor();
+    const created = await createConfirmedDelivery(customer);
+    await payments.confirmMockPayment(customer, created.payment.id, `evt-admin-assign-offered-rider-${created.delivery.id}`);
+
+    const assigned = await adminService.assign(admin, created.delivery.id, rider.id, 'dispatcher confirms offered rider');
+
+    expect(assigned.delivery.assignedRiderId).toBe(rider.id);
+    expect(assigned.delivery.status).toBe(DeliveryStatus.RIDER_ASSIGNED);
+  });
+
   it('lets admin suspend a rider and cancel their open offers', async () => {
     const customer = await createCustomer();
     const rider = await demoRiderActor();
@@ -223,6 +238,32 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     await riders.arrivedDrop(rider, accepted.assignment.id);
 
     await expect(riders.delivered(rider, accepted.assignment.id, {})).rejects.toThrow('Delivery proof is required');
+  });
+
+  it('returns signed proof file URLs without exposing raw private refs', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const accepted = await createAcceptedDelivery(customer, rider);
+
+    await riders.arrivedPickup(rider, accepted.assignment.id);
+    await riders.pickedUp(rider, accepted.assignment.id, 'PKUP-123');
+    await riders.arrivedDrop(rider, accepted.assignment.id);
+    await riders.delivered(rider, accepted.assignment.id, { photoUrl: 'https://private.example/proof.jpg' });
+
+    const detail = await deliveries.getDeliveryForActor(customer, accepted.delivery.id);
+    const photoProof = detail.proofs.find((proof) => proof.type === 'PHOTO');
+    expect(photoProof?.fileUrl).toBeUndefined();
+    expect(photoProof?.signedUrl).toContain(`/api/v1/proofs/${photoProof.id}/file`);
+    expect(photoProof?.retentionExpiresAt).toBeTruthy();
+
+    const signedUrl = new URL(photoProof!.signedUrl!, 'http://localhost:4000');
+    const access = await proofsService.signedFileAccess(
+      photoProof!.id,
+      signedUrl.searchParams.get('expires')!,
+      signedUrl.searchParams.get('token')!,
+    );
+    expect(access.fileRef).toBe('https://private.example/proof.jpg');
+    await expect(proofsService.signedFileAccess(photoProof!.id, '1', 'bad-token')).rejects.toThrow('Invalid or expired proof file URL');
   });
 
   it('prevents two riders from accepting the same delivery', async () => {
@@ -415,6 +456,9 @@ runPrisma('Prisma-backed functional SEND spine', () => {
 
   async function resetRiders() {
     const rider = await prisma.user.findUniqueOrThrow({ where: { phone: '+910000000002' } });
+    await prisma.riderProfile.updateMany({
+      data: { availabilityStatus: 'OFFLINE', suspended: false },
+    });
     await prisma.riderProfile.update({
       where: { userId: rider.id },
       data: { approvalStatus: 'APPROVED', availabilityStatus: 'ONLINE_IDLE', suspended: false },

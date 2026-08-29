@@ -139,6 +139,7 @@ export class RidersService {
       fileUrl: typeof metadata.photoUrl === 'string' ? metadata.photoUrl : typeof metadata.signatureUrl === 'string' ? metadata.signatureUrl : undefined,
       otpVerified: type === 'OTP',
       metadata,
+      retentionExpiresAt: this.proofRetentionExpiresAt().toISOString(),
       createdAt: this.store.now(),
     };
     this.store.proofs.set(proof.id, proof);
@@ -259,6 +260,7 @@ export class RidersService {
         fileUrl: typeof metadata.photoUrl === 'string' ? metadata.photoUrl : typeof metadata.signatureUrl === 'string' ? metadata.signatureUrl : undefined,
         otpVerified: type === 'OTP',
         metadata: metadata as Prisma.InputJsonObject,
+        retentionExpiresAt: this.proofRetentionExpiresAt(),
       },
     });
     await this.prisma.auditLog.create({
@@ -271,6 +273,11 @@ export class RidersService {
       },
     });
     return proof;
+  }
+
+  private proofRetentionExpiresAt() {
+    const days = Number(process.env.PROOF_RETENTION_DAYS ?? 90);
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 
   private async requireRiderWithPrisma(actor: User) {

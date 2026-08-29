@@ -6,7 +6,9 @@ export interface Proof {
   type: ProofType;
   createdBy: string;
   fileUrl?: string;
+  signedUrl?: string;
   otpVerified?: boolean;
   metadata?: Record<string, unknown>;
+  retentionExpiresAt?: string;
   createdAt: string;
 }

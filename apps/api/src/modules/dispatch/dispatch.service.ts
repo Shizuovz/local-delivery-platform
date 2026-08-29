@@ -180,7 +180,7 @@ export class DispatchService {
     if (!delivery) throw new NotFoundError('Delivery not found');
     const rider = this.store.riders.get(riderId);
     if (!rider) throw new NotFoundError('Rider not found');
-    if (!this.isRiderEligible(rider)) throw new ConflictError('Rider is not eligible');
+    if (!this.isRiderEligibleForManualAssignment(rider, deliveryId)) throw new ConflictError('Rider is not eligible');
 
     for (const existing of this.store.assignments.values()) {
       if (existing.deliveryId === delivery.id && [AssignmentStatus.OFFERED, AssignmentStatus.ACCEPTED].includes(existing.status)) {
@@ -461,7 +461,7 @@ export class DispatchService {
     const delivery = await this.prisma.delivery.findUnique({ where: { id: deliveryId } });
     if (!delivery) throw new NotFoundError('Delivery not found');
     await this.requireRiderByIdWithPrisma(riderId);
-    if (!(await this.isRiderEligibleWithPrisma(riderId))) throw new ConflictError('Rider is not eligible');
+    if (!(await this.isRiderEligibleForManualAssignmentWithPrisma(riderId, deliveryId))) throw new ConflictError('Rider is not eligible');
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
@@ -564,6 +564,17 @@ export class DispatchService {
       && !rider.suspended
       && rider.availabilityStatus === allowedStatus
       && hasFreshLocation;
+  }
+
+  private isRiderEligibleForManualAssignment(rider: RiderProfile, deliveryId: string) {
+    if (this.isRiderEligible(rider)) return true;
+    const offeredForDelivery = [...this.store.assignments.values()].some((assignment) => (
+      assignment.deliveryId === deliveryId
+      && assignment.riderId === rider.userId
+      && assignment.status === AssignmentStatus.OFFERED
+      && (!assignment.expiresAt || Date.parse(assignment.expiresAt) > Date.now())
+    ));
+    return offeredForDelivery && this.isRiderEligible(rider, RiderAvailabilityStatus.OFFERED_JOB);
   }
 
   private requireRider(actor: User) {
@@ -675,6 +686,22 @@ export class DispatchService {
       && !rider.suspended
       && rider.availabilityStatus === allowedStatus
       && hasFreshLocation;
+  }
+
+  private async isRiderEligibleForManualAssignmentWithPrisma(riderId: string, deliveryId: string) {
+    if (await this.isRiderEligibleWithPrisma(riderId)) return true;
+    const activeOffer = await this.prisma.assignment.findFirst({
+      where: {
+        deliveryId,
+        riderId,
+        status: 'OFFERED',
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } },
+        ],
+      },
+    });
+    return Boolean(activeOffer) && await this.isRiderEligibleWithPrisma(riderId, RiderAvailabilityStatus.OFFERED_JOB);
   }
 
   private async requireRiderWithPrisma(actor: User) {

@@ -10,6 +10,8 @@ export default function App() {
   const [userId, setUserId] = useState('');
   const [quoteId, setQuoteId] = useState('');
   const [paymentId, setPaymentId] = useState('');
+  const [paymentProviderRef, setPaymentProviderRef] = useState('');
+  const [paymentAmountMinor, setPaymentAmountMinor] = useState(0);
   const [deliveryId, setDeliveryId] = useState('');
   const [deliveryType, setDeliveryType] = useState<'SEND' | 'LIMITED_FETCH'>('SEND');
   const [busy, setBusy] = useState(false);
@@ -74,17 +76,37 @@ export default function App() {
     });
     setDeliveryId(result.delivery.id);
     setPaymentId(result.payment.id);
+    setPaymentProviderRef(result.payment.providerRef);
+    setPaymentAmountMinor(result.payment.amountMinor);
   }
 
   async function pay() {
-    await api('/payments/mock/confirm', {
+    await api('/payments/webhooks/mock', {
       method: 'POST',
-      body: JSON.stringify({ paymentId, providerEventId: `evt-customer-${Date.now()}` }),
+      headers: { 'x-mock-payment-signature': 'dev-mock-payment-secret' },
+      body: JSON.stringify({
+        providerEventId: `evt-customer-${Date.now()}`,
+        providerRef: paymentProviderRef,
+        status: 'PAID',
+        amountMinor: paymentAmountMinor,
+        currency: 'INR',
+      }),
     });
   }
 
   async function track() {
     await api(`/deliveries/${deliveryId}/tracking`);
+  }
+
+  async function cancelDelivery() {
+    await api(`/deliveries/${deliveryId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'Customer cancelled from mobile test UI' }),
+    });
+  }
+
+  async function proof() {
+    await api(`/deliveries/${deliveryId}/proof`);
   }
 
   return (
@@ -98,6 +120,7 @@ export default function App() {
       <Field label="User ID" value={userId} onChangeText={setUserId} />
       <Field label="Quote ID" value={quoteId} onChangeText={setQuoteId} />
       <Field label="Payment ID" value={paymentId} onChangeText={setPaymentId} />
+      <Field label="Payment Provider Ref" value={paymentProviderRef} onChangeText={setPaymentProviderRef} />
       <Field label="Delivery ID" value={deliveryId} onChangeText={setDeliveryId} />
 
       <View style={styles.modeRow}>
@@ -109,8 +132,10 @@ export default function App() {
         <Button title="1. Login" disabled={busy} onPress={() => runStep('Login', login)} />
         <Button title="2. Create Quote" disabled={busy || !userId} onPress={() => runStep('Create quote', quote)} />
         <Button title="3. Create Delivery" disabled={busy || !quoteId} onPress={() => runStep('Create delivery', createDelivery)} />
-        <Button title="4. Confirm Payment" disabled={busy || !paymentId} onPress={() => runStep('Confirm payment', pay)} />
+        <Button title="4. Confirm Payment Webhook" disabled={busy || !paymentProviderRef || !paymentAmountMinor} onPress={() => runStep('Confirm payment webhook', pay)} />
         <Button title="5. Track" disabled={busy || !deliveryId} onPress={() => runStep('Track delivery', track)} />
+        <Button title="6. View Proof" disabled={busy || !deliveryId} onPress={() => runStep('View proof', proof)} />
+        <Button title="Cancel Delivery" disabled={busy || !deliveryId} onPress={() => runStep('Cancel delivery', cancelDelivery)} />
       </View>
 
       <Text style={styles.sectionTitle}>Latest API Response</Text>

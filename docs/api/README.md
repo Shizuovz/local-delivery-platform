@@ -17,6 +17,7 @@ Public endpoints:
 - `POST /auth/request-otp`
 - `POST /auth/verify-otp`
 - `POST /payments/webhooks/mock`
+- `GET /proofs/:id/file`
 - `GET /health`
 
 Protected endpoints require:
@@ -148,6 +149,22 @@ The mock webhook is public from the auth guard perspective but must include the 
 GET /deliveries/:id/tracking
 ```
 
+### Proof Metadata
+
+```http
+GET /deliveries/:id/proof
+```
+
+Returns sanitized proof records for the authenticated delivery owner, assigned rider, business owner, or admin. Raw private file references are not returned. Proof file records include a short-lived `signedUrl` when file access is available.
+
+### Signed Proof File Access
+
+```http
+GET /proofs/:id/file?expires=<unix_ms>&token=<signature>
+```
+
+The signed proof file endpoint is public from the auth guard perspective because the signed URL itself is the access token. Clients should first request proof metadata through an authorized delivery endpoint, then use the returned `signedUrl`. Local development returns private-file metadata instead of streaming a real S3 object.
+
 ## Rider Endpoints
 
 - `PATCH /rider/availability`
@@ -242,6 +259,7 @@ Implemented for the functional spine:
 - Admin rider approval/suspension controls
 - Admin business approval/suspension controls
 - Admin support-ticket list/status controls
+- Sanitized proof metadata with short-lived signed file URLs
 
 Not yet implemented:
 
@@ -249,4 +267,5 @@ Not yet implemented:
 - Real provider refund API calls
 - Full pricing/service-zone admin configuration
 - Full admin reports and payment/refund monitoring screens
-- Signed proof/document URLs
+- Real S3-compatible proof/document object storage and streaming
+- Signed rider document URLs

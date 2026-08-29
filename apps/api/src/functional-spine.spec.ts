@@ -8,6 +8,7 @@ import { DeliveriesService } from './modules/deliveries/deliveries.service';
 import { BusinessesService } from './modules/businesses/businesses.service';
 import { AdminService } from './modules/admin/admin.service';
 import { PaymentsService } from './modules/payments/payments.service';
+import { ProofsService } from './modules/proofs/proofs.service';
 import { RidersService } from './modules/riders/riders.service';
 import { AssignmentStatus, DeliveryStatus, DeliveryType, PaymentStatus, RefundStatus, RiderAvailabilityStatus } from '@local-delivery/types';
 
@@ -20,6 +21,7 @@ function setup() {
   const dispatch = new DispatchService(store, prisma);
   const deliveries = new DeliveriesService(store, dispatch, prisma);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
+  const proofsService = new ProofsService(store, prisma);
   const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
   const adminService = new AdminService(store, dispatch, prisma, deliveries);
   const riders = new RidersService(store, deliveries, dispatch, prisma);
@@ -28,7 +30,7 @@ function setup() {
   const admin = [...store.users.values()].find((user) => user.roles.includes('OPS_ADMIN'))!;
   const businessUser = [...store.users.values()].find((user) => user.roles.includes('BUSINESS'))!;
   const business = [...store.businesses.values()][0];
-  return { store, dispatch, deliveries, payments, businesses, adminService, riders, customer, rider, admin, businessUser, business };
+  return { store, dispatch, deliveries, payments, proofsService, businesses, adminService, riders, customer, rider, admin, businessUser, business };
 }
 
 const quoteInput = {
@@ -93,6 +95,33 @@ runInMemory('functional SEND spine', () => {
     riders.arrivedDrop(rider, accepted.assignment.id);
 
     expect(() => riders.delivered(rider, accepted.assignment.id, {})).toThrow('Delivery proof is required');
+  });
+
+  it('returns signed proof file URLs without exposing raw private refs', async () => {
+    const { deliveries, payments, proofsService, riders, customer, rider } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'send-photo-proof' });
+    const paid = payments.confirmMockPayment(customer, created.payment.id, 'evt-photo-proof');
+    const accepted = riders.accept(rider, paid.dispatch!.offeredAssignment!.id);
+    riders.arrivedPickup(rider, accepted.assignment.id);
+    riders.pickedUp(rider, accepted.assignment.id, 'PKUP-123');
+    riders.arrivedDrop(rider, accepted.assignment.id);
+    riders.delivered(rider, accepted.assignment.id, { photoUrl: 'https://private.example/proof.jpg' });
+
+    const detail = await deliveries.getDeliveryForActor(customer, created.delivery.id);
+    const photoProof = detail.proofs.find((proof) => proof.type === 'PHOTO');
+    expect(photoProof?.fileUrl).toBeUndefined();
+    expect(photoProof?.signedUrl).toContain(`/api/v1/proofs/${photoProof.id}/file`);
+    expect(photoProof?.retentionExpiresAt).toBeTruthy();
+
+    const signedUrl = new URL(photoProof!.signedUrl!, 'http://localhost:4000');
+    const access = await proofsService.signedFileAccess(
+      photoProof!.id,
+      signedUrl.searchParams.get('expires')!,
+      signedUrl.searchParams.get('token')!,
+    );
+    expect(access.fileRef).toBe('https://private.example/proof.jpg');
+    await expect(proofsService.signedFileAccess(photoProof!.id, '1', 'bad-token')).rejects.toThrow('Invalid or expired proof file URL');
   });
 
   it('handles duplicate payment webhook simulation idempotently', () => {
@@ -177,6 +206,18 @@ runInMemory('functional SEND spine', () => {
       expect.objectContaining({ paymentId: created.payment.id, status: RefundStatus.SUCCEEDED }),
     ]);
     expect(store.auditLogs.some((log) => log.action === 'refund.mock_succeeded' && log.reason === 'support approved cancellation')).toBe(true);
+  });
+
+  it('lets admin assign the rider already holding the active offer', () => {
+    const { deliveries, payments, adminService, customer, rider, admin } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'admin-assign-offered-rider' });
+    payments.confirmMockPayment(customer, created.payment.id, 'evt-admin-assign-offered-rider');
+
+    const assigned = adminService.assign(admin, created.delivery.id, rider.id, 'dispatcher confirms offered rider');
+
+    expect(assigned.delivery.assignedRiderId).toBe(rider.id);
+    expect(assigned.delivery.status).toBe(DeliveryStatus.RIDER_ASSIGNED);
   });
 
   it('lets admin suspend a rider and cancel their open offers', () => {

@@ -42,7 +42,7 @@ Final retention periods must be approved before launch. Use these development de
 | Raw rider locations | Keep only while operationally useful; target 7-30 days before launch decision. |
 | Delivery status history | Retain as operational/legal record. |
 | Audit logs | Retain as operational/security record. |
-| Proof files | Retain according to dispute window; serve through signed URLs only. |
+| Proof files | Local default 90 days via `PROOF_RETENTION_DAYS`; final dispute-window retention must be approved before launch. Serve through signed URLs only. |
 | Rider documents | Retain while rider is active and for required compliance period after offboarding. |
 | Payment/refund records | Retain according to accounting/provider requirements. |
 | Support tickets | Retain through dispute/accounting window, then minimize if possible. |
@@ -61,5 +61,6 @@ Private files must not be public bucket URLs. Proof photos, signatures, rider do
 ## Local Development Notes
 
 - Local dev may use mock OTP and mock payment.
+- Local dev may use mock private proof file references, but API responses must expose only sanitized proof metadata and signed access URLs.
 - Local dev must not contain real customer data, rider documents, or payment secrets.
 - `.env` files and provider keys must not be committed.

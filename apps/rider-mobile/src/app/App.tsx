@@ -94,10 +94,12 @@ export default function App() {
         <Button title="3. Send Location" disabled={busy || !userId} onPress={() => runStep('Send location', sendLocation)} />
         <Button title="4. Load Offers" disabled={busy || !userId} onPress={() => runStep('Load offers', loadOffers)} />
         <Button title="5. Accept" disabled={busy || !assignmentId} onPress={() => runStep('Accept job', () => api(`/rider/jobs/${assignmentId}/accept`, { method: 'POST' }).then(() => undefined))} />
+        <Button title="Reject Offer" disabled={busy || !assignmentId} onPress={() => runStep('Reject offer', () => api(`/rider/jobs/${assignmentId}/reject`, { method: 'POST' }).then(() => undefined))} />
         <Button title="6. Arrived Pickup" disabled={busy || !assignmentId} onPress={() => runStep('Arrived pickup', () => api(`/rider/jobs/${assignmentId}/arrived-pickup`, { method: 'POST' }).then(() => undefined))} />
         <Button title="7. Picked Up" disabled={busy || !assignmentId} onPress={() => runStep('Picked up', () => api(`/rider/jobs/${assignmentId}/picked-up`, { method: 'POST', body: JSON.stringify({ pickupReference: 'PKUP-123' }) }).then(() => undefined))} />
         <Button title="8. Arrived Drop" disabled={busy || !assignmentId} onPress={() => runStep('Arrived drop', () => api(`/rider/jobs/${assignmentId}/arrived-drop`, { method: 'POST' }).then(() => undefined))} />
         <Button title="9. Delivered" disabled={busy || !assignmentId} onPress={() => runStep('Delivered', () => api(`/rider/jobs/${assignmentId}/delivered`, { method: 'POST', body: JSON.stringify({ otp: '123456' }) }).then(() => undefined))} />
+        <Button title="10. Earnings" disabled={busy || !userId} onPress={() => runStep('Load earnings', () => api('/rider/earnings').then(() => undefined))} />
       </View>
 
       <Text style={styles.sectionTitle}>Latest API Response</Text>

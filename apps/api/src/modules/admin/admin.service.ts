@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { AssignmentStatus, DeliveryStatus, RiderAvailabilityStatus, User } from '@local-delivery/types';
+import { AssignmentStatus, DeliveryStatus, Proof, RiderAvailabilityStatus, User } from '@local-delivery/types';
 import { ForbiddenError, NotFoundError } from '../../common/domain-errors';
 import { InMemoryStore } from '../../common/in-memory-store';
+import { signProofFileUrl } from '../../common/proof-file-signing';
 import { PrismaService } from '../../common/prisma.service';
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { DispatchService } from '../dispatch/dispatch.service';
@@ -47,7 +48,9 @@ export class AdminService {
       delivery: this.store.deliveries.get(deliveryId),
       history: this.store.history.filter((event) => event.deliveryId === deliveryId),
       audits: this.store.auditLogs.filter((log) => log.entityId === deliveryId || log.metadata?.['deliveryId'] === deliveryId),
-      proofs: [...this.store.proofs.values()].filter((proof) => proof.deliveryId === deliveryId),
+      proofs: [...this.store.proofs.values()]
+        .filter((proof) => proof.deliveryId === deliveryId)
+        .map((proof) => this.toProof(proof)),
       refunds: [...this.store.refunds.values()].filter((refund) => refund.paymentId === this.store.deliveries.get(deliveryId)?.paymentId),
       supportTickets: [...this.store.supportTickets.values()].filter((ticket) => ticket.deliveryId === deliveryId),
     };
@@ -210,7 +213,17 @@ export class AdminService {
         },
         orderBy: { createdAt: 'asc' },
       }),
-      proofs: delivery?.proofs ?? [],
+      proofs: delivery?.proofs.map((proof) => this.toProof({
+        id: proof.id,
+        deliveryId: proof.deliveryId,
+        type: proof.type as Proof['type'],
+        createdBy: proof.createdBy,
+        fileUrl: proof.fileUrl ?? undefined,
+        otpVerified: proof.otpVerified,
+        metadata: proof.metadata as Record<string, unknown> | undefined,
+        retentionExpiresAt: proof.retentionExpiresAt?.toISOString(),
+        createdAt: proof.createdAt.toISOString(),
+      })) ?? [],
       refunds: delivery?.payments.flatMap((payment) => payment.refunds) ?? [],
       supportTickets: delivery?.supportTickets ?? [],
     };
@@ -353,5 +366,13 @@ export class AdminService {
       });
       return updated;
     });
+  }
+
+  private toProof(proof: Proof): Proof {
+    const { fileUrl, ...safeProof } = proof;
+    return {
+      ...safeProof,
+      signedUrl: fileUrl ? signProofFileUrl(proof.id) : undefined,
+    };
   }
 }

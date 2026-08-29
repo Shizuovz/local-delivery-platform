@@ -34,6 +34,8 @@ export default function BusinessDeliveryPage() {
   const [businesses, setBusinesses] = useState<ApiRecord[]>([]);
   const [businessId, setBusinessId] = useState('');
   const [deliveries, setDeliveries] = useState<ApiRecord[]>([]);
+  const [deliveryId, setDeliveryId] = useState('');
+  const [deliveryDetail, setDeliveryDetail] = useState<ApiRecord | null>(null);
   const [deliveryPayload, setDeliveryPayload] = useState(JSON.stringify(initialDelivery, null, 2));
   const [status, setStatus] = useState('Ready');
   const [busy, setBusy] = useState(false);
@@ -106,6 +108,14 @@ export default function BusinessDeliveryPage() {
   async function loadDeliveries() {
     const result = await api(`/business/deliveries${businessId ? `?businessId=${businessId}` : ''}`);
     setDeliveries(Array.isArray(result) ? result : []);
+    if (Array.isArray(result) && result[0]?.id) {
+      setDeliveryId(result[0].id);
+    }
+  }
+
+  async function loadDeliveryDetail() {
+    const result = await api(`/business/deliveries/${deliveryId}`);
+    setDeliveryDetail(result);
   }
 
   return (
@@ -135,12 +145,17 @@ export default function BusinessDeliveryPage() {
           Business ID
           <input value={businessId} onChange={(event) => setBusinessId(event.target.value)} style={styles.input} />
         </label>
+        <label style={styles.label}>
+          Delivery ID
+          <input value={deliveryId} onChange={(event) => setDeliveryId(event.target.value)} style={styles.input} />
+        </label>
       </section>
 
       <section style={styles.toolbar}>
         <button disabled={busy || !businessUserId} onClick={() => runStep('Load profile', loadProfile)} style={styles.button}>Load Profile</button>
         <button disabled={busy || !businessUserId || !businessId} onClick={() => runStep('Create delivery', createDelivery)} style={styles.button}>Create Delivery</button>
         <button disabled={busy || !businessUserId} onClick={() => runStep('Load deliveries', loadDeliveries)} style={styles.button}>Load Deliveries</button>
+        <button disabled={busy || !businessUserId || !deliveryId} onClick={() => runStep('Load delivery detail', loadDeliveryDetail)} style={styles.button}>Load Detail</button>
       </section>
 
       <section style={styles.columns}>
@@ -157,15 +172,41 @@ export default function BusinessDeliveryPage() {
       <section style={styles.columns}>
         <div>
           <h2 style={styles.sectionTitle}>Deliveries</h2>
-          <pre style={styles.output}>{JSON.stringify(deliveries, null, 2)}</pre>
+          <div style={styles.list}>
+            {deliveries.length === 0 ? (
+              <p style={styles.subtle}>No deliveries loaded.</p>
+            ) : deliveries.map((delivery) => (
+              <button
+                key={String(delivery.id)}
+                disabled={busy}
+                onClick={() => setDeliveryId(String(delivery.id ?? ''))}
+                style={{
+                  ...styles.rowButton,
+                  ...(delivery.id === deliveryId ? styles.selectedRow : {}),
+                }}
+              >
+                <strong>{shortId(String(delivery.id ?? ''))}</strong>
+                <span>{String(delivery.type ?? 'delivery')} - {String(delivery.status ?? 'UNKNOWN')}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div>
-          <h2 style={styles.sectionTitle}>Latest API Response</h2>
-          <pre style={styles.output}>{output || 'No response yet.'}</pre>
+          <h2 style={styles.sectionTitle}>Delivery Detail</h2>
+          <pre style={styles.output}>{JSON.stringify(deliveryDetail, null, 2)}</pre>
         </div>
+      </section>
+
+      <section>
+        <h2 style={styles.sectionTitle}>Latest API Response</h2>
+        <pre style={styles.output}>{output || 'No response yet.'}</pre>
       </section>
     </main>
   );
+}
+
+function shortId(value: string) {
+  return value.length > 10 ? `${value.slice(0, 8)}...` : value || '-';
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -224,6 +265,25 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  list: {
+    display: 'grid',
+    gap: 8,
+  },
+  rowButton: {
+    background: '#ffffff',
+    border: '1px solid #d7deea',
+    borderRadius: 6,
+    color: '#172033',
+    cursor: 'pointer',
+    display: 'grid',
+    gap: 4,
+    minHeight: 56,
+    padding: 10,
+    textAlign: 'left',
+  },
+  selectedRow: {
+    borderColor: '#00687a',
   },
   button: {
     border: '1px solid #9aabc2',
