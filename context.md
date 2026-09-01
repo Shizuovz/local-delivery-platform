@@ -72,6 +72,11 @@ Completed:
 - Local reset workflow through `npm run db:reset`.
 - Cache policy and Redis-backed admin operations report.
 - Admin dashboard operations metrics.
+- Playwright admin operations smoke test.
+- S3-compatible private object key abstraction with local mock signed uploads.
+- Signed proof upload URL endpoint.
+- Signed rider document URLs for rider/admin views.
+- Retention cleanup service/job for proof and rider document file refs.
 
 ## Verified Workflows
 
@@ -88,6 +93,8 @@ Validation commands recently passed:
 npm run typecheck
 npm run lint
 npm --workspace apps/api run test
+PERSISTENCE_MODE=prisma npm --workspace apps/api run test
+npm run test:e2e -- --project=admin-chrome
 ```
 
 ## Current Git State
@@ -95,6 +102,9 @@ npm --workspace apps/api run test
 Latest pushed commits:
 
 ```text
+8aec8ec Harden private file storage flows
+18c7b78 Add Playwright admin operations smoke test
+f7e91ff Add cached admin operations report
 6a49c21 Add local database reset workflow
 053e1ec Harden admin workflow and proof access
 9b2445d Harden payments refunds and admin operations
@@ -158,10 +168,6 @@ Not yet implemented:
 
 - Real payment provider integration.
 - Real payment provider refund API calls.
-- S3-compatible private object key abstraction with local mock signed uploads.
-- Signed proof upload URL endpoint.
-- Signed rider document URLs for rider/admin views.
-- Retention cleanup service/job for proof and rider document file refs.
 - Provider-backed S3 streaming remains to be added when storage provider is selected.
 - Full pricing/service-zone admin configuration.
 - Full admin reports and payment/refund monitoring screens.
