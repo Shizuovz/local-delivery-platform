@@ -95,4 +95,9 @@ export class AdminController {
   async auditLogs(@CurrentUser() actor: User) {
     return this.adminService.auditLogs(actor);
   }
+
+  @Get('reports/operations')
+  async operationsReport(@CurrentUser() actor: User) {
+    return this.adminService.operationsReport(actor);
+  }
 }

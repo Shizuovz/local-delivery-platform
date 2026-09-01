@@ -1,5 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { AssignmentStatus, DeliveryStatus, Proof, RiderAvailabilityStatus, User } from '@local-delivery/types';
+import {
+  AdminOperationsReport,
+  AssignmentStatus,
+  DeliveryStatus,
+  PaymentStatus,
+  Proof,
+  RefundStatus,
+  RiderAvailabilityStatus,
+  User,
+} from '@local-delivery/types';
+import { CacheService } from '../../common/cache.service';
 import { ForbiddenError, NotFoundError } from '../../common/domain-errors';
 import { InMemoryStore } from '../../common/in-memory-store';
 import { signProofFileUrl } from '../../common/proof-file-signing';
@@ -14,6 +24,7 @@ export class AdminService {
     private readonly dispatchService: DispatchService,
     private readonly prisma: PrismaService,
     private readonly deliveriesService: DeliveriesService,
+    private readonly cache: CacheService,
   ) {}
 
   listDeliveries(actor: User) {
@@ -184,10 +195,204 @@ export class AdminService {
     return this.store.auditLogs;
   }
 
+  async operationsReport(actor: User): Promise<AdminOperationsReport> {
+    this.requireAdmin(actor);
+    const cacheKey = 'cache:v1:admin:operations-report';
+    const ttlSeconds = 15;
+    const cached = await this.cache.getJson<AdminOperationsReport>(cacheKey);
+    if (cached) {
+      return {
+        ...cached,
+        cache: { ...cached.cache, hit: true },
+      };
+    }
+
+    const report = this.prisma.isEnabled()
+      ? await this.operationsReportWithPrisma(cacheKey, ttlSeconds)
+      : this.operationsReportFromMemory(cacheKey, ttlSeconds);
+    await this.cache.setJson(cacheKey, report, { ttlSeconds });
+    return report;
+  }
+
   private requireAdmin(actor: User) {
     if (!actor.roles.includes('OPS_ADMIN') && !actor.roles.includes('SUPER_ADMIN')) {
       throw new ForbiddenError('Admin role required');
     }
+  }
+
+  private async operationsReportWithPrisma(cacheKey: string, ttlSeconds: number): Promise<AdminOperationsReport> {
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const activeStatuses: DeliveryStatus[] = [
+      DeliveryStatus.CONFIRMED,
+      DeliveryStatus.SEARCHING_RIDER,
+      DeliveryStatus.RIDER_ASSIGNED,
+      DeliveryStatus.EN_ROUTE_PICKUP,
+      DeliveryStatus.ARRIVED_PICKUP,
+      DeliveryStatus.PICKED_UP,
+      DeliveryStatus.EN_ROUTE_DROP,
+      DeliveryStatus.ARRIVED_DROP,
+      DeliveryStatus.RETURN_REQUIRED,
+    ];
+    const assignedStatuses: DeliveryStatus[] = [
+      DeliveryStatus.RIDER_ASSIGNED,
+      DeliveryStatus.EN_ROUTE_PICKUP,
+      DeliveryStatus.ARRIVED_PICKUP,
+      DeliveryStatus.PICKED_UP,
+      DeliveryStatus.EN_ROUTE_DROP,
+      DeliveryStatus.ARRIVED_DROP,
+      DeliveryStatus.RETURN_REQUIRED,
+    ];
+    const staleCutoff = new Date(now.getTime() - 10 * 60 * 1000);
+
+    const [
+      active,
+      searchingRider,
+      assigned,
+      deliveredToday,
+      cancelledToday,
+      failedOrDisputed,
+      refundPending,
+      paid,
+      failedPayments,
+      openSupport,
+      inProgressSupport,
+      closedToday,
+      unassignedSearching,
+      staleSearching,
+    ] = await Promise.all([
+      this.prisma.delivery.count({ where: { status: { in: activeStatuses } } }),
+      this.prisma.delivery.count({ where: { status: DeliveryStatus.SEARCHING_RIDER } }),
+      this.prisma.delivery.count({ where: { status: { in: assignedStatuses } } }),
+      this.prisma.delivery.count({ where: { status: DeliveryStatus.DELIVERED, updatedAt: { gte: todayStart } } }),
+      this.prisma.delivery.count({ where: { status: DeliveryStatus.CANCELLED, updatedAt: { gte: todayStart } } }),
+      this.prisma.delivery.count({ where: { status: { in: [DeliveryStatus.FAILED, DeliveryStatus.DISPUTED] } } }),
+      this.prisma.refund.count({ where: { status: { in: [RefundStatus.REQUESTED, RefundStatus.APPROVED, RefundStatus.PROCESSING] } } }),
+      this.prisma.payment.count({ where: { status: PaymentStatus.PAID } }),
+      this.prisma.payment.count({ where: { status: PaymentStatus.FAILED } }),
+      this.prisma.supportTicket.count({ where: { status: 'OPEN' } }),
+      this.prisma.supportTicket.count({ where: { status: 'IN_PROGRESS' } }),
+      this.prisma.supportTicket.count({ where: { status: { in: ['RESOLVED', 'CLOSED'] }, updatedAt: { gte: todayStart } } }),
+      this.prisma.delivery.count({ where: { status: DeliveryStatus.SEARCHING_RIDER, assignedRiderId: null } }),
+      this.prisma.delivery.count({
+        where: {
+          status: DeliveryStatus.SEARCHING_RIDER,
+          assignments: {
+            none: {
+              status: { in: [AssignmentStatus.OFFERED, AssignmentStatus.ACCEPTED] },
+              updatedAt: { gte: staleCutoff },
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      generatedAt: now.toISOString(),
+      cache: { key: cacheKey, ttlSeconds, hit: false },
+      deliveryCounts: {
+        active,
+        searchingRider,
+        assigned,
+        deliveredToday,
+        cancelledToday,
+        failedOrDisputed,
+      },
+      paymentCounts: {
+        refundPending,
+        paid,
+        failed: failedPayments,
+      },
+      supportCounts: {
+        open: openSupport,
+        inProgress: inProgressSupport,
+        closedToday,
+      },
+      dispatchCounts: {
+        adminAttention: unassignedSearching + failedOrDisputed + openSupport + inProgressSupport,
+        unassignedSearching,
+        staleSearching,
+      },
+    };
+  }
+
+  private operationsReportFromMemory(cacheKey: string, ttlSeconds: number): AdminOperationsReport {
+    const now = new Date();
+    const todayStartMs = new Date(now).setHours(0, 0, 0, 0);
+    const activeStatuses = new Set<DeliveryStatus>([
+      DeliveryStatus.CONFIRMED,
+      DeliveryStatus.SEARCHING_RIDER,
+      DeliveryStatus.RIDER_ASSIGNED,
+      DeliveryStatus.EN_ROUTE_PICKUP,
+      DeliveryStatus.ARRIVED_PICKUP,
+      DeliveryStatus.PICKED_UP,
+      DeliveryStatus.EN_ROUTE_DROP,
+      DeliveryStatus.ARRIVED_DROP,
+      DeliveryStatus.RETURN_REQUIRED,
+    ]);
+    const assignedStatuses = new Set<DeliveryStatus>([
+      DeliveryStatus.RIDER_ASSIGNED,
+      DeliveryStatus.EN_ROUTE_PICKUP,
+      DeliveryStatus.ARRIVED_PICKUP,
+      DeliveryStatus.PICKED_UP,
+      DeliveryStatus.EN_ROUTE_DROP,
+      DeliveryStatus.ARRIVED_DROP,
+      DeliveryStatus.RETURN_REQUIRED,
+    ]);
+    const deliveries = [...this.store.deliveries.values()];
+    const payments = [...this.store.payments.values()];
+    const refunds = [...this.store.refunds.values()];
+    const tickets = [...this.store.supportTickets.values()];
+    const assignments = [...this.store.assignments.values()];
+    const staleCutoffMs = now.getTime() - 10 * 60 * 1000;
+    const failedOrDisputed = deliveries.filter((delivery) => (
+      delivery.status === DeliveryStatus.FAILED || delivery.status === DeliveryStatus.DISPUTED
+    )).length;
+    const openSupport = tickets.filter((ticket) => ticket.status === 'OPEN').length;
+    const inProgressSupport = tickets.filter((ticket) => ticket.status === 'IN_PROGRESS').length;
+    const unassignedSearching = deliveries.filter((delivery) => (
+      delivery.status === DeliveryStatus.SEARCHING_RIDER && !delivery.assignedRiderId
+    )).length;
+    const staleSearching = deliveries.filter((delivery) => {
+      if (delivery.status !== DeliveryStatus.SEARCHING_RIDER) return false;
+      return !assignments.some((assignment) => (
+        assignment.deliveryId === delivery.id
+        && [AssignmentStatus.OFFERED, AssignmentStatus.ACCEPTED].includes(assignment.status)
+        && Date.parse(assignment.acceptedAt ?? assignment.offeredAt) >= staleCutoffMs
+      ));
+    }).length;
+
+    return {
+      generatedAt: now.toISOString(),
+      cache: { key: cacheKey, ttlSeconds, hit: false },
+      deliveryCounts: {
+        active: deliveries.filter((delivery) => activeStatuses.has(delivery.status)).length,
+        searchingRider: deliveries.filter((delivery) => delivery.status === DeliveryStatus.SEARCHING_RIDER).length,
+        assigned: deliveries.filter((delivery) => assignedStatuses.has(delivery.status)).length,
+        deliveredToday: deliveries.filter((delivery) => delivery.status === DeliveryStatus.DELIVERED && Date.parse(delivery.updatedAt ?? delivery.createdAt) >= todayStartMs).length,
+        cancelledToday: deliveries.filter((delivery) => delivery.status === DeliveryStatus.CANCELLED && Date.parse(delivery.updatedAt ?? delivery.createdAt) >= todayStartMs).length,
+        failedOrDisputed,
+      },
+      paymentCounts: {
+        refundPending: refunds.filter((refund) => [RefundStatus.REQUESTED, RefundStatus.APPROVED, RefundStatus.PROCESSING].includes(refund.status)).length,
+        paid: payments.filter((payment) => payment.status === PaymentStatus.PAID).length,
+        failed: payments.filter((payment) => payment.status === PaymentStatus.FAILED).length,
+      },
+      supportCounts: {
+        open: openSupport,
+        inProgress: inProgressSupport,
+        closedToday: tickets.filter((ticket) => (
+          ['RESOLVED', 'CLOSED'].includes(ticket.status)
+          && Date.parse(ticket.createdAt) >= todayStartMs
+        )).length,
+      },
+      dispatchCounts: {
+        adminAttention: unassignedSearching + failedOrDisputed + openSupport + inProgressSupport,
+        unassignedSearching,
+        staleSearching,
+      },
+    };
   }
 
   private async deliveryTimelineWithPrisma(deliveryId: string) {

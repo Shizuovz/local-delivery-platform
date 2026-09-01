@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
+import { CacheService } from './common/cache.service';
 import { quoteDeliverySchema } from '@local-delivery/validation';
 import { DispatchQueueService } from './modules/dispatch/dispatch.queue';
 import { DispatchService } from './modules/dispatch/dispatch.service';
@@ -23,7 +24,8 @@ function setup() {
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
   const proofsService = new ProofsService(store, prisma);
   const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
-  const adminService = new AdminService(store, dispatch, prisma, deliveries);
+  const cache = noCache();
+  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache);
   const riders = new RidersService(store, deliveries, dispatch, prisma);
   const customer = store.findOrCreateUser('+919999999999', ['CUSTOMER']);
   const rider = [...store.users.values()].find((user) => user.roles.includes('RIDER'))!;
@@ -31,6 +33,15 @@ function setup() {
   const businessUser = [...store.users.values()].find((user) => user.roles.includes('BUSINESS'))!;
   const business = [...store.businesses.values()][0];
   return { store, dispatch, deliveries, payments, proofsService, businesses, adminService, riders, customer, rider, admin, businessUser, business };
+}
+
+function noCache(): CacheService {
+  return {
+    getJson: async () => undefined,
+    setJson: async () => undefined,
+    delete: async () => undefined,
+    onModuleDestroy: async () => undefined,
+  } as CacheService;
 }
 
 const quoteInput = {
@@ -218,6 +229,26 @@ runInMemory('functional SEND spine', () => {
 
     expect(assigned.delivery.assignedRiderId).toBe(rider.id);
     expect(assigned.delivery.status).toBe(DeliveryStatus.RIDER_ASSIGNED);
+  });
+
+  it('returns admin operations report counts', async () => {
+    const { deliveries, payments, adminService, customer, admin } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'admin-report-counts' });
+    payments.confirmMockPayment(customer, created.payment.id, 'evt-admin-report-counts');
+    adminService.markDeliveryException(admin, created.delivery.id, 'address needs review');
+
+    const report = await adminService.operationsReport(admin);
+
+    expect(report.cache).toEqual(expect.objectContaining({
+      key: 'cache:v1:admin:operations-report',
+      ttlSeconds: 15,
+      hit: false,
+    }));
+    expect(report.deliveryCounts.searchingRider).toBeGreaterThanOrEqual(1);
+    expect(report.paymentCounts.paid).toBeGreaterThanOrEqual(1);
+    expect(report.supportCounts.open).toBeGreaterThanOrEqual(1);
+    expect(report.dispatchCounts.adminAttention).toBeGreaterThanOrEqual(1);
   });
 
   it('lets admin suspend a rider and cancel their open offers', () => {

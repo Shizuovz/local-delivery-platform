@@ -16,6 +16,7 @@ export * from './models/notification';
 export * from './models/payment';
 export * from './models/proof';
 export * from './models/refund';
+export * from './models/report';
 export * from './models/rider';
 export * from './models/rider-earning';
 export * from './models/rider-location';

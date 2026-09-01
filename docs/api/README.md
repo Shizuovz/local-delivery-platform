@@ -194,6 +194,7 @@ Delivery completion requires OTP, photo URL, or signature URL.
 - `GET /admin/support/tickets`
 - `PATCH /admin/support/tickets/:id`
 - `GET /admin/audit-logs`
+- `GET /admin/reports/operations`
 
 Admin assign/reassign requests must include:
 
@@ -240,6 +241,48 @@ Support-ticket updates accept:
 }
 ```
 
+### Operations Report
+
+```http
+GET /admin/reports/operations
+```
+
+Returns short-lived cached operational counts for the admin dashboard. PostgreSQL remains the source of truth; Redis cache is an optimization only.
+
+```json
+{
+  "generatedAt": "2026-09-01T00:00:00.000Z",
+  "cache": {
+    "key": "cache:v1:admin:operations-report",
+    "ttlSeconds": 15,
+    "hit": false
+  },
+  "deliveryCounts": {
+    "active": 4,
+    "searchingRider": 1,
+    "assigned": 2,
+    "deliveredToday": 8,
+    "cancelledToday": 1,
+    "failedOrDisputed": 0
+  },
+  "paymentCounts": {
+    "refundPending": 1,
+    "paid": 12,
+    "failed": 0
+  },
+  "supportCounts": {
+    "open": 1,
+    "inProgress": 2,
+    "closedToday": 3
+  },
+  "dispatchCounts": {
+    "adminAttention": 4,
+    "unassignedSearching": 1,
+    "staleSearching": 1
+  }
+}
+```
+
 ## Current Scope
 
 Implemented for the functional spine:
@@ -260,12 +303,14 @@ Implemented for the functional spine:
 - Admin business approval/suspension controls
 - Admin support-ticket list/status controls
 - Sanitized proof metadata with short-lived signed file URLs
+- Cache policy and Redis-backed admin operations report
+- Admin dashboard operations metrics
 
 Not yet implemented:
 
 - Real payment provider integration
 - Real provider refund API calls
 - Full pricing/service-zone admin configuration
-- Full admin reports and payment/refund monitoring screens
+- Full admin report exports and payment/refund monitoring screens
 - Real S3-compatible proof/document object storage and streaming
 - Signed rider document URLs

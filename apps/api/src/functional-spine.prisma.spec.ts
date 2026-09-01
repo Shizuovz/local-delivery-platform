@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ActorService } from './common/actor.service';
 import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
+import { CacheService } from './common/cache.service';
 import { quoteDeliverySchema } from '@local-delivery/validation';
 import { AuthService } from './modules/auth/auth.service';
 import { AdminService } from './modules/admin/admin.service';
@@ -49,7 +50,8 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const riders = new RidersService(store, deliveries, dispatch, prisma);
   const actors = new ActorService(store, prisma);
   const auth = new AuthService(store, prisma);
-  const adminService = new AdminService(store, dispatch, prisma, deliveries);
+  const cache = noCache();
+  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache);
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -175,6 +177,26 @@ runPrisma('Prisma-backed functional SEND spine', () => {
 
     expect(assigned.delivery.assignedRiderId).toBe(rider.id);
     expect(assigned.delivery.status).toBe(DeliveryStatus.RIDER_ASSIGNED);
+  });
+
+  it('returns admin operations report counts', async () => {
+    const customer = await createCustomer();
+    const admin = await adminActor();
+    const created = await createConfirmedDelivery(customer);
+    await payments.confirmMockPayment(customer, created.payment.id, `evt-admin-report-counts-${created.delivery.id}`);
+    await adminService.markDeliveryException(admin, created.delivery.id, 'address needs review');
+
+    const report = await adminService.operationsReport(admin);
+
+    expect(report.cache).toEqual(expect.objectContaining({
+      key: 'cache:v1:admin:operations-report',
+      ttlSeconds: 15,
+      hit: false,
+    }));
+    expect(report.deliveryCounts.searchingRider).toBeGreaterThanOrEqual(1);
+    expect(report.paymentCounts.paid).toBeGreaterThanOrEqual(1);
+    expect(report.supportCounts.open).toBeGreaterThanOrEqual(1);
+    expect(report.dispatchCounts.adminAttention).toBeGreaterThanOrEqual(1);
   });
 
   it('lets admin suspend a rider and cancel their open offers', async () => {
@@ -431,6 +453,15 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     const phone = `+9198${Date.now().toString().slice(-8)}${Math.floor(Math.random() * 1000)}`;
     await auth.requestOtp(phone);
     return (await auth.verifyOtp(phone, '123456', 'CUSTOMER')).user;
+  }
+
+  function noCache(): CacheService {
+    return {
+      getJson: async () => undefined,
+      setJson: async () => undefined,
+      delete: async () => undefined,
+      onModuleDestroy: async () => undefined,
+    } as CacheService;
   }
 
   async function createConfirmedDelivery(customer: Awaited<ReturnType<typeof createCustomer>>) {

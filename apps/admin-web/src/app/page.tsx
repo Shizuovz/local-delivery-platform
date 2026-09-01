@@ -59,12 +59,45 @@ type Timeline = JsonRecord & {
   supportTickets?: SupportTicket[];
 };
 
+type AdminOperationsReport = {
+  generatedAt: string;
+  cache: {
+    key: string;
+    ttlSeconds: number;
+    hit: boolean;
+  };
+  deliveryCounts: {
+    active: number;
+    searchingRider: number;
+    assigned: number;
+    deliveredToday: number;
+    cancelledToday: number;
+    failedOrDisputed: number;
+  };
+  paymentCounts: {
+    refundPending: number;
+    paid: number;
+    failed: number;
+  };
+  supportCounts: {
+    open: number;
+    inProgress: number;
+    closedToday: number;
+  };
+  dispatchCounts: {
+    adminAttention: number;
+    unassignedSearching: number;
+    staleSearching: number;
+  };
+};
+
 export default function AdminOperationsPage() {
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
   const [phone, setPhone] = useState(DEFAULT_ADMIN_PHONE);
   const [adminUserId, setAdminUserId] = useState('');
   const [deliveries, setDeliveries] = useState<DeliverySummary[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [operationsReport, setOperationsReport] = useState<AdminOperationsReport | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [deliveryId, setDeliveryId] = useState('');
   const [riderId, setRiderId] = useState('');
@@ -143,6 +176,11 @@ export default function AdminOperationsPage() {
   async function loadSupportTickets() {
     const result = await api<SupportTicket[]>('/admin/support/tickets');
     setSupportTickets(Array.isArray(result) ? result : []);
+  }
+
+  async function loadOperationsReport() {
+    const result = await api<AdminOperationsReport>('/admin/reports/operations');
+    setOperationsReport(result);
   }
 
   async function assign(reassign = false) {
@@ -235,6 +273,7 @@ export default function AdminOperationsPage() {
         <div style={styles.panelHeader}>
           <h2 id="connection-heading" style={styles.sectionTitle}>Connection</h2>
           <button disabled={busy || !adminUserId} onClick={() => runStep('Load workspace', async () => {
+            await loadOperationsReport();
             await loadDeliveries();
             await loadSupportTickets();
           })} style={styles.button}>
@@ -245,6 +284,32 @@ export default function AdminOperationsPage() {
           <Field label="API URL" value={apiUrl} onChange={setApiUrl} />
           <Field label="Admin Phone" value={phone} onChange={setPhone} />
           <Field label="Admin User ID" value={adminUserId} onChange={setAdminUserId} />
+        </div>
+      </section>
+
+      <section style={styles.panel} aria-labelledby="operations-heading">
+        <div style={styles.panelHeader}>
+          <div>
+            <h2 id="operations-heading" style={styles.sectionTitle}>Operations Report</h2>
+            <p style={styles.subtle}>
+              {operationsReport
+                ? `Generated ${formatTime(operationsReport.generatedAt)} - cache ${operationsReport.cache.hit ? 'hit' : 'fresh'}`
+                : 'Load workspace to refresh operational metrics.'}
+            </p>
+          </div>
+          <button disabled={busy || !adminUserId} onClick={() => runStep('Load operations report', loadOperationsReport)} style={styles.button}>
+            Load Report
+          </button>
+        </div>
+        <div style={styles.metricGrid}>
+          <Metric label="Active" value={operationsReport?.deliveryCounts.active} tone="neutral" />
+          <Metric label="Searching" value={operationsReport?.deliveryCounts.searchingRider} tone="warn" />
+          <Metric label="Assigned" value={operationsReport?.deliveryCounts.assigned} tone="neutral" />
+          <Metric label="Delivered Today" value={operationsReport?.deliveryCounts.deliveredToday} tone="good" />
+          <Metric label="Cancelled Today" value={operationsReport?.deliveryCounts.cancelledToday} tone="bad" />
+          <Metric label="Refund Pending" value={operationsReport?.paymentCounts.refundPending} tone="warn" />
+          <Metric label="Open Support" value={operationsReport?.supportCounts.open} tone="warn" />
+          <Metric label="Admin Attention" value={operationsReport?.dispatchCounts.adminAttention} tone="bad" />
         </div>
       </section>
 
@@ -456,6 +521,15 @@ function StatusBadge({ status }: { status: string }) {
   return <span style={{ ...styles.badge, ...badgeTone(status) }}>{status}</span>;
 }
 
+function Metric({ label, value, tone }: { label: string; value?: number; tone: 'good' | 'bad' | 'warn' | 'neutral' }) {
+  return (
+    <div style={{ ...styles.metric, ...metricTone(tone) }}>
+      <span style={styles.metricLabel}>{label}</span>
+      <strong style={styles.metricValue}>{typeof value === 'number' ? value : '-'}</strong>
+    </div>
+  );
+}
+
 function DataList({ items, empty }: { items: JsonRecord[]; empty: string }) {
   if (!items.length) return <p style={styles.empty}>{empty}</p>;
   return (
@@ -505,6 +579,12 @@ function formatMoney(amountMinor?: number, currency = 'INR') {
   return `${currency} ${(amountMinor / 100).toFixed(2)}`;
 }
 
+function formatTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 function shortId(value?: string | null) {
   if (!value) return '-';
   return value.length > 10 ? `${value.slice(0, 8)}...` : value;
@@ -521,6 +601,13 @@ function badgeTone(status: string): CSSProperties {
   if (['CANCELLED', 'FAILED', 'REJECTED', 'SUSPENDED', 'CLOSED'].includes(status)) return styles.badgeBad;
   if (['REFUND_PENDING', 'RETURN_REQUIRED', 'DISPUTED', 'IN_PROGRESS'].includes(status)) return styles.badgeWarn;
   return styles.badgeNeutral;
+}
+
+function metricTone(tone: 'good' | 'bad' | 'warn' | 'neutral'): CSSProperties {
+  if (tone === 'good') return styles.metricGood;
+  if (tone === 'bad') return styles.metricBad;
+  if (tone === 'warn') return styles.metricWarn;
+  return styles.metricNeutral;
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -579,6 +666,49 @@ const styles: Record<string, CSSProperties> = {
     display: 'grid',
     gap: 16,
     gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+  },
+  metricGrid: {
+    display: 'grid',
+    gap: 10,
+    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+  },
+  metric: {
+    border: '1px solid #d8e0ec',
+    borderRadius: 6,
+    display: 'grid',
+    gap: 8,
+    minHeight: 84,
+    padding: 12,
+  },
+  metricLabel: {
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+  },
+  metricValue: {
+    fontSize: 28,
+    lineHeight: 1,
+  },
+  metricGood: {
+    background: '#e7f6ee',
+    borderColor: '#8acba4',
+    color: '#006c4f',
+  },
+  metricBad: {
+    background: '#fff2f2',
+    borderColor: '#f2b8b5',
+    color: '#8c1d18',
+  },
+  metricWarn: {
+    background: '#fff8e1',
+    borderColor: '#d7b568',
+    color: '#694a00',
+  },
+  metricNeutral: {
+    background: '#f7f8fb',
+    borderColor: '#d8e0ec',
+    color: '#172033',
   },
   label: {
     color: '#42526a',
