@@ -363,6 +363,9 @@ Current storage foundation includes:
 - signed rider document upload/list/read URLs
 - local mock signed upload route
 - proof/document retention cleanup service and job entry point
+- rider mobile proof/document upload controls wired to real API endpoints
+- customer mobile signed proof read control wired to real API endpoints
+- admin web rider document/proof signed read controls wired to real API endpoints
 
 Next spec gap:
 

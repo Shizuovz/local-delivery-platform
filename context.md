@@ -77,6 +77,9 @@ Completed:
 - Signed proof upload URL endpoint.
 - Signed rider document URLs for rider/admin views.
 - Retention cleanup service/job for proof and rider document file refs.
+- Minimal rider UI proof upload/document upload workflow wiring.
+- Minimal customer UI signed proof read workflow wiring.
+- Minimal admin UI rider document/proof signed read workflow wiring.
 
 ## Verified Workflows
 
@@ -86,6 +89,9 @@ Verified with Prisma/PostgreSQL:
 - Admin web assigns rider, reassigns rider, marks exception, cancels delivery, shows refund visibility, and creates support ticket.
 - Customer mobile API path creates quote, creates delivery, confirms payment webhook, tracks delivery, and views proof metadata.
 - Rider mobile API path receives offer, accepts, moves through pickup/drop, completes proof, and loads earnings.
+- Rider mobile UI can create proof/document upload sessions, perform local mock uploads, and submit proof object keys.
+- Customer mobile UI can read signed proof file metadata after loading proof records.
+- Admin web UI can load rider documents and read signed document/proof metadata.
 
 Validation commands recently passed:
 
@@ -217,4 +223,4 @@ Completed in this slice:
    - stale dispatch/admin attention
 5. Wire those metrics into the admin dashboard.
 
-Current recommended slice after storage verification: provider-backed file streaming/upload integration or production observability hardening, depending on whether the storage provider has been selected.
+Current recommended slice after storage UI verification: provider-backed S3 upload/download streaming, production observability hardening, or final pricing/service-zone admin configuration depending on launch-risk priority.

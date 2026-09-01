@@ -9,6 +9,10 @@ export default function App() {
   const [phone, setPhone] = useState(DEFAULT_PHONE);
   const [userId, setUserId] = useState('');
   const [assignmentId, setAssignmentId] = useState('');
+  const [deliveryId, setDeliveryId] = useState('');
+  const [proofObjectKey, setProofObjectKey] = useState('');
+  const [documentId, setDocumentId] = useState('');
+  const [documentSignedUrl, setDocumentSignedUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Ready');
   const [output, setOutput] = useState('');
@@ -74,6 +78,78 @@ export default function App() {
     const result = await api('/rider/jobs/offers');
     if (Array.isArray(result) && result[0]?.id) {
       setAssignmentId(result[0].id);
+      if (result[0]?.deliveryId) setDeliveryId(result[0].deliveryId);
+    }
+  }
+
+  async function acceptJob() {
+    const result = await api(`/rider/jobs/${assignmentId}/accept`, { method: 'POST' });
+    if (result?.delivery?.id) setDeliveryId(result.delivery.id);
+  }
+
+  async function signedUpload(uploadUrl: string, contentType: string) {
+    const response = await fetch(new URL(uploadUrl, apiUrl).toString(), {
+      method: 'PUT',
+      headers: { 'content-type': contentType },
+    });
+    const body = await response.json().catch(() => ({}));
+    setOutput(JSON.stringify(body, null, 2));
+    if (!response.ok) {
+      throw new Error(String(body?.error?.message ?? body?.message ?? 'Signed upload failed'));
+    }
+  }
+
+  async function createProofUpload() {
+    if (!deliveryId) throw new Error('Accept or enter a delivery ID first');
+    const result = await api('/proofs/upload-url', {
+      method: 'POST',
+      body: JSON.stringify({
+        deliveryId,
+        type: 'PHOTO',
+        fileName: 'drop-proof.jpg',
+        contentType: 'image/jpeg',
+      }),
+    });
+    setProofObjectKey(result.objectKey);
+    await signedUpload(result.uploadUrl, 'image/jpeg');
+  }
+
+  async function deliverWithPhotoProof() {
+    await api(`/rider/jobs/${assignmentId}/delivered`, {
+      method: 'POST',
+      body: JSON.stringify({ photoObjectKey: proofObjectKey }),
+    });
+  }
+
+  async function createDocumentUpload() {
+    const result = await api('/rider/documents/upload-url', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'DRIVING_LICENSE',
+        fileName: 'license.pdf',
+        contentType: 'application/pdf',
+      }),
+    });
+    setDocumentId(result.document.id);
+    setDocumentSignedUrl(result.document.signedUrl ?? '');
+    await signedUpload(result.upload.uploadUrl, 'application/pdf');
+  }
+
+  async function loadDocuments() {
+    const result = await api('/rider/documents');
+    if (Array.isArray(result) && result[0]?.id) {
+      setDocumentId(result[0].id);
+      setDocumentSignedUrl(result[0].signedUrl ?? '');
+    }
+  }
+
+  async function readDocument() {
+    if (!documentSignedUrl) throw new Error('Load a signed document URL first');
+    const response = await fetch(new URL(documentSignedUrl, apiUrl).toString());
+    const body = await response.json().catch(() => ({}));
+    setOutput(JSON.stringify(body, null, 2));
+    if (!response.ok) {
+      throw new Error(String(body?.error?.message ?? body?.message ?? 'Signed document request failed'));
     }
   }
 
@@ -87,19 +163,28 @@ export default function App() {
       <Field label="Phone" value={phone} onChangeText={setPhone} />
       <Field label="Rider User ID" value={userId} onChangeText={setUserId} />
       <Field label="Assignment ID" value={assignmentId} onChangeText={setAssignmentId} />
+      <Field label="Delivery ID" value={deliveryId} onChangeText={setDeliveryId} />
+      <Field label="Proof Object Key" value={proofObjectKey} onChangeText={setProofObjectKey} />
+      <Field label="Document ID" value={documentId} onChangeText={setDocumentId} />
+      <Field label="Document Signed URL" value={documentSignedUrl} onChangeText={setDocumentSignedUrl} />
 
       <View style={styles.actions}>
         <Button title="1. Login" disabled={busy} onPress={() => runStep('Login', login)} />
         <Button title="2. Go Online" disabled={busy || !userId} onPress={() => runStep('Go online', goOnline)} />
         <Button title="3. Send Location" disabled={busy || !userId} onPress={() => runStep('Send location', sendLocation)} />
         <Button title="4. Load Offers" disabled={busy || !userId} onPress={() => runStep('Load offers', loadOffers)} />
-        <Button title="5. Accept" disabled={busy || !assignmentId} onPress={() => runStep('Accept job', () => api(`/rider/jobs/${assignmentId}/accept`, { method: 'POST' }).then(() => undefined))} />
+        <Button title="5. Accept" disabled={busy || !assignmentId} onPress={() => runStep('Accept job', acceptJob)} />
         <Button title="Reject Offer" disabled={busy || !assignmentId} onPress={() => runStep('Reject offer', () => api(`/rider/jobs/${assignmentId}/reject`, { method: 'POST' }).then(() => undefined))} />
         <Button title="6. Arrived Pickup" disabled={busy || !assignmentId} onPress={() => runStep('Arrived pickup', () => api(`/rider/jobs/${assignmentId}/arrived-pickup`, { method: 'POST' }).then(() => undefined))} />
         <Button title="7. Picked Up" disabled={busy || !assignmentId} onPress={() => runStep('Picked up', () => api(`/rider/jobs/${assignmentId}/picked-up`, { method: 'POST', body: JSON.stringify({ pickupReference: 'PKUP-123' }) }).then(() => undefined))} />
         <Button title="8. Arrived Drop" disabled={busy || !assignmentId} onPress={() => runStep('Arrived drop', () => api(`/rider/jobs/${assignmentId}/arrived-drop`, { method: 'POST' }).then(() => undefined))} />
         <Button title="9. Delivered" disabled={busy || !assignmentId} onPress={() => runStep('Delivered', () => api(`/rider/jobs/${assignmentId}/delivered`, { method: 'POST', body: JSON.stringify({ otp: '123456' }) }).then(() => undefined))} />
+        <Button title="9b. Create Proof Upload" disabled={busy || !userId || !deliveryId} onPress={() => runStep('Create proof upload', createProofUpload)} />
+        <Button title="9c. Delivered With Photo Proof" disabled={busy || !assignmentId || !proofObjectKey} onPress={() => runStep('Delivered with photo proof', deliverWithPhotoProof)} />
         <Button title="10. Earnings" disabled={busy || !userId} onPress={() => runStep('Load earnings', () => api('/rider/earnings').then(() => undefined))} />
+        <Button title="11. Create Document Upload" disabled={busy || !userId} onPress={() => runStep('Create document upload', createDocumentUpload)} />
+        <Button title="12. Load Documents" disabled={busy || !userId} onPress={() => runStep('Load documents', loadDocuments)} />
+        <Button title="13. Read Signed Document" disabled={busy || !documentSignedUrl} onPress={() => runStep('Read signed document', readDocument)} />
       </View>
 
       <Text style={styles.sectionTitle}>Latest API Response</Text>

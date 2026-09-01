@@ -13,6 +13,7 @@ export default function App() {
   const [paymentProviderRef, setPaymentProviderRef] = useState('');
   const [paymentAmountMinor, setPaymentAmountMinor] = useState(0);
   const [deliveryId, setDeliveryId] = useState('');
+  const [proofSignedUrl, setProofSignedUrl] = useState('');
   const [deliveryType, setDeliveryType] = useState<'SEND' | 'LIMITED_FETCH'>('SEND');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Ready');
@@ -106,7 +107,19 @@ export default function App() {
   }
 
   async function proof() {
-    await api(`/deliveries/${deliveryId}/proof`);
+    const result = await api(`/deliveries/${deliveryId}/proof`);
+    const signedUrl = Array.isArray(result) ? result.find((item) => typeof item?.signedUrl === 'string')?.signedUrl : undefined;
+    setProofSignedUrl(signedUrl ?? '');
+  }
+
+  async function readProofFile() {
+    if (!proofSignedUrl) throw new Error('Load proof metadata with a signed URL first');
+    const response = await fetch(new URL(proofSignedUrl, apiUrl).toString());
+    const body = await response.json().catch(() => ({}));
+    setOutput(JSON.stringify(body, null, 2));
+    if (!response.ok) {
+      throw new Error(String(body?.error?.message ?? body?.message ?? 'Signed proof request failed'));
+    }
   }
 
   return (
@@ -122,6 +135,7 @@ export default function App() {
       <Field label="Payment ID" value={paymentId} onChangeText={setPaymentId} />
       <Field label="Payment Provider Ref" value={paymentProviderRef} onChangeText={setPaymentProviderRef} />
       <Field label="Delivery ID" value={deliveryId} onChangeText={setDeliveryId} />
+      <Field label="Proof Signed URL" value={proofSignedUrl} onChangeText={setProofSignedUrl} />
 
       <View style={styles.modeRow}>
         <Button title="SEND" disabled={busy || deliveryType === 'SEND'} onPress={() => setDeliveryType('SEND')} />
@@ -135,6 +149,7 @@ export default function App() {
         <Button title="4. Confirm Payment Webhook" disabled={busy || !paymentProviderRef || !paymentAmountMinor} onPress={() => runStep('Confirm payment webhook', pay)} />
         <Button title="5. Track" disabled={busy || !deliveryId} onPress={() => runStep('Track delivery', track)} />
         <Button title="6. View Proof" disabled={busy || !deliveryId} onPress={() => runStep('View proof', proof)} />
+        <Button title="7. Read Signed Proof File" disabled={busy || !proofSignedUrl} onPress={() => runStep('Read signed proof file', readProofFile)} />
         <Button title="Cancel Delivery" disabled={busy || !deliveryId} onPress={() => runStep('Cancel delivery', cancelDelivery)} />
       </View>
 

@@ -54,9 +54,22 @@ type Timeline = JsonRecord & {
   delivery?: DeliverySummary;
   history?: JsonRecord[];
   audits?: JsonRecord[];
-  proofs?: JsonRecord[];
+  proofs?: ProofSummary[];
   refunds?: RefundSummary[];
   supportTickets?: SupportTicket[];
+};
+
+type ProofSummary = JsonRecord & {
+  id?: string;
+  type?: string;
+  signedUrl?: string;
+};
+
+type RiderDocumentSummary = JsonRecord & {
+  id?: string;
+  type?: string;
+  status?: string;
+  signedUrl?: string;
 };
 
 type AdminOperationsReport = {
@@ -97,6 +110,7 @@ export default function AdminOperationsPage() {
   const [adminUserId, setAdminUserId] = useState('');
   const [deliveries, setDeliveries] = useState<DeliverySummary[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [riderDocuments, setRiderDocuments] = useState<RiderDocumentSummary[]>([]);
   const [operationsReport, setOperationsReport] = useState<AdminOperationsReport | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [deliveryId, setDeliveryId] = useState('');
@@ -226,6 +240,32 @@ export default function AdminOperationsPage() {
         reason,
       }),
     });
+  }
+
+  async function loadRiderDocuments() {
+    if (!riderId) throw new Error('Choose or enter a rider ID first');
+    const result = await api<RiderDocumentSummary[]>(`/admin/riders/${riderId}/documents`);
+    setRiderDocuments(Array.isArray(result) ? result : []);
+  }
+
+  async function readSignedUrl(signedUrl: string | undefined, label: string) {
+    if (!signedUrl) throw new Error(`No signed ${label} URL available`);
+    const response = await fetch(new URL(signedUrl, apiUrl).toString());
+    const body = await response.json().catch(() => ({}));
+    setOutput(JSON.stringify(body, null, 2));
+    if (!response.ok) {
+      throw new Error(getErrorMessage(body));
+    }
+  }
+
+  async function readFirstRiderDocument() {
+    const document = riderDocuments.find((item) => item.signedUrl);
+    await readSignedUrl(document?.signedUrl, 'rider document');
+  }
+
+  async function readFirstProofFile() {
+    const proof = timeline?.proofs?.find((item) => item.signedUrl);
+    await readSignedUrl(proof?.signedUrl, 'proof file');
   }
 
   async function updateBusinessStatus() {
@@ -412,7 +452,14 @@ export default function AdminOperationsPage() {
             <button disabled={busy || !riderId} onClick={() => runStep('Update rider status', updateRiderStatus)} style={styles.button}>
               Update Rider
             </button>
+            <button disabled={busy || !riderId} onClick={() => runStep('Load rider documents', loadRiderDocuments)} style={styles.button}>
+              Load Documents
+            </button>
+            <button disabled={busy || !riderDocuments.some((document) => document.signedUrl)} onClick={() => runStep('Read rider document', readFirstRiderDocument)} style={styles.button}>
+              Read Signed Document
+            </button>
           </div>
+          <DataList items={riderDocuments} empty="Load rider documents to review signed document URLs." />
         </div>
 
         <div style={styles.panel}>
@@ -488,7 +535,13 @@ export default function AdminOperationsPage() {
       <section style={styles.operatingGrid}>
         <div style={styles.panel}>
           <h2 style={styles.sectionTitle}>Timeline</h2>
+          <div style={styles.actionGrid}>
+            <button disabled={busy || !timeline?.proofs?.some((proof) => proof.signedUrl)} onClick={() => runStep('Read proof file', readFirstProofFile)} style={styles.button}>
+              Read Signed Proof
+            </button>
+          </div>
           <DataList items={timeline?.history ?? []} empty="Load a delivery timeline to see state history." />
+          <DataList items={timeline?.proofs ?? []} empty="No proof records for selected delivery." />
         </div>
         <div style={styles.panel}>
           <h2 style={styles.sectionTitle}>Latest API Response</h2>
