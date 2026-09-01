@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
 import { CacheService } from './common/cache.service';
+import { ObjectStorageService } from './common/object-storage.service';
+import { PrivateFileRetentionService } from './common/private-file-retention.service';
 import { quoteDeliverySchema } from '@local-delivery/validation';
 import { DispatchQueueService } from './modules/dispatch/dispatch.queue';
 import { DispatchService } from './modules/dispatch/dispatch.service';
@@ -20,19 +22,21 @@ function setup() {
   const prisma = new PrismaService();
   const dispatchQueue = new DispatchQueueService();
   const dispatch = new DispatchService(store, prisma);
+  const storage = new ObjectStorageService();
   const deliveries = new DeliveriesService(store, dispatch, prisma);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
-  const proofsService = new ProofsService(store, prisma);
+  const proofsService = new ProofsService(store, prisma, deliveries, storage);
   const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
   const cache = noCache();
-  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache);
-  const riders = new RidersService(store, deliveries, dispatch, prisma);
+  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache, storage);
+  const riders = new RidersService(store, deliveries, dispatch, prisma, storage);
+  const privateFileRetention = new PrivateFileRetentionService(store, prisma);
   const customer = store.findOrCreateUser('+919999999999', ['CUSTOMER']);
   const rider = [...store.users.values()].find((user) => user.roles.includes('RIDER'))!;
   const admin = [...store.users.values()].find((user) => user.roles.includes('OPS_ADMIN'))!;
   const businessUser = [...store.users.values()].find((user) => user.roles.includes('BUSINESS'))!;
   const business = [...store.businesses.values()][0];
-  return { store, dispatch, deliveries, payments, proofsService, businesses, adminService, riders, customer, rider, admin, businessUser, business };
+  return { store, dispatch, deliveries, payments, proofsService, businesses, adminService, riders, privateFileRetention, customer, rider, admin, businessUser, business };
 }
 
 function noCache(): CacheService {
@@ -133,6 +137,93 @@ runInMemory('functional SEND spine', () => {
     );
     expect(access.fileRef).toBe('https://private.example/proof.jpg');
     await expect(proofsService.signedFileAccess(photoProof!.id, '1', 'bad-token')).rejects.toThrow('Invalid or expired proof file URL');
+  });
+
+  it('creates private proof upload URLs and completes delivery with object keys', async () => {
+    const { deliveries, payments, proofsService, riders, customer, rider } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'send-proof-object-key' });
+    const upload = await proofsService.createUploadUrl(customer, {
+      deliveryId: created.delivery.id,
+      type: 'PHOTO',
+      fileName: 'drop proof.JPG',
+      contentType: 'image/jpeg',
+    });
+    const paid = payments.confirmMockPayment(customer, created.payment.id, 'evt-proof-object-key');
+    const accepted = riders.accept(rider, paid.dispatch!.offeredAssignment!.id);
+    riders.arrivedPickup(rider, accepted.assignment.id);
+    riders.pickedUp(rider, accepted.assignment.id, 'PKUP-123');
+    riders.arrivedDrop(rider, accepted.assignment.id);
+    riders.delivered(rider, accepted.assignment.id, { photoObjectKey: upload.objectKey });
+
+    const detail = await deliveries.getDeliveryForActor(customer, created.delivery.id);
+    const proof = detail.proofs.find((item) => item.type === 'PHOTO');
+    const signedUrl = new URL(proof!.signedUrl!, 'http://localhost:4000');
+    const access = await proofsService.signedFileAccess(
+      proof!.id,
+      signedUrl.searchParams.get('expires')!,
+      signedUrl.searchParams.get('token')!,
+    );
+
+    expect(upload.objectKey).toMatch(/^private\/proofs\/.+\/.+-drop-proof\.jpg$/);
+    expect(upload.uploadUrl).toContain('/api/v1/storage/mock-upload');
+    expect(proof?.fileUrl).toBeUndefined();
+    expect(access.fileRef).toBe(upload.objectKey);
+  });
+
+  it('creates signed rider document URLs for rider and admin views', async () => {
+    const { adminService, riders, rider, admin } = setup();
+    const result = await riders.createDocumentUploadUrl(rider, {
+      type: 'DRIVING_LICENSE',
+      fileName: 'license.pdf',
+      contentType: 'application/pdf',
+    });
+
+    const riderDocuments = await riders.documents(rider);
+    const adminDocuments = await adminService.riderDocuments(admin, rider.id);
+    const signedUrl = new URL(riderDocuments[0].signedUrl!, 'http://localhost:4000');
+    const access = await riders.signedDocumentAccess(
+      riderDocuments[0].id,
+      signedUrl.searchParams.get('expires')!,
+      signedUrl.searchParams.get('token')!,
+    );
+
+    expect(result.upload.objectKey).toMatch(/^private\/rider-documents\/.+\/.+-license\.pdf$/);
+    expect(result.document.signedUrl).toContain(`/api/v1/rider/documents/${result.document.id}/file`);
+    expect(riderDocuments[0]).toEqual(expect.objectContaining({ type: 'DRIVING_LICENSE', signedUrl: expect.any(String) }));
+    expect(adminDocuments[0]).toEqual(expect.objectContaining({ type: 'DRIVING_LICENSE', signedUrl: expect.any(String) }));
+    expect(access.fileRef).toBe(result.upload.objectKey);
+    await expect(riders.signedDocumentAccess(result.document.id, '1', 'bad-token')).rejects.toThrow('Invalid or expired rider document URL');
+  });
+
+  it('expires retained proof and rider document file references', async () => {
+    const { store, riders, privateFileRetention, rider } = setup();
+    const proof = {
+      id: store.createId('proof'),
+      deliveryId: store.createId('del'),
+      type: 'PHOTO' as const,
+      createdBy: rider.id,
+      fileUrl: 'private/proofs/delivery/proof.jpg',
+      metadata: {},
+      retentionExpiresAt: '2024-01-01T00:00:00.000Z',
+      createdAt: store.now(),
+    };
+    store.proofs.set(proof.id, proof);
+    const document = await riders.createDocumentUploadUrl(rider, {
+      type: 'ID_PROOF',
+      fileName: 'id.pdf',
+      contentType: 'application/pdf',
+    });
+    store.riderDocuments.get(document.document.id)!.retentionExpiresAt = '2024-01-01T00:00:00.000Z';
+
+    const result = await privateFileRetention.cleanupExpiredPrivateFiles(new Date('2025-01-01T00:00:00.000Z'));
+
+    expect(result).toEqual({ proofsExpired: 1, riderDocumentsExpired: 1 });
+    expect(store.proofs.get(proof.id)?.fileUrl).toBeUndefined();
+    expect(store.riderDocuments.get(document.document.id)).toEqual(expect.objectContaining({
+      status: 'EXPIRED',
+      fileUrl: undefined,
+    }));
   });
 
   it('handles duplicate payment webhook simulation idempotently', () => {

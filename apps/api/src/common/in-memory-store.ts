@@ -15,6 +15,7 @@ import {
   PaymentStatus,
   Proof,
   Refund,
+  RiderDocument,
   RiderAvailabilityStatus,
   RiderLocation,
   RiderProfile,
@@ -51,6 +52,7 @@ export class InMemoryStore {
   readonly refundIdempotency = new Map<string, string>();
   readonly assignments = new Map<string, Assignment>();
   readonly proofs = new Map<string, Proof>();
+  readonly riderDocuments = new Map<string, RiderDocument & { fileUrl?: string }>();
   readonly supportTickets = new Map<string, SupportTicket>();
   readonly history: DeliveryStatusEvent[] = [];
   readonly auditLogs: AuditLog[] = [];

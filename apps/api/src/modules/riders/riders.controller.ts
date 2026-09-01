@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
-import { deliveryProofSchema, riderAvailabilitySchema, riderLocationSchema } from '@local-delivery/validation';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { deliveryProofSchema, riderAvailabilitySchema, riderDocumentUploadUrlSchema, riderLocationSchema } from '@local-delivery/validation';
 import { User } from '@local-delivery/types';
 import { CurrentUser } from '../../common/current-user.decorator';
+import { Public } from '../../common/public.decorator';
 import { RateLimit } from '../../common/rate-limit.decorator';
 import { RidersService } from './riders.service';
 
@@ -26,6 +27,28 @@ export class RidersController {
   @Get('jobs/offers')
   async offers(@CurrentUser() actor: User) {
     return this.ridersService.offers(actor);
+  }
+
+  @Get('documents')
+  async documents(@CurrentUser() actor: User) {
+    return this.ridersService.documents(actor);
+  }
+
+  @Post('documents/upload-url')
+  @RateLimit({ key: 'rider.document_upload_url', limit: 20, windowMs: 60 * 1000 })
+  async documentUploadUrl(@CurrentUser() actor: User, @Body() body: unknown) {
+    const input = riderDocumentUploadUrlSchema.parse(body);
+    return this.ridersService.createDocumentUploadUrl(actor, input);
+  }
+
+  @Public()
+  @Get('documents/:id/file')
+  async signedDocumentFile(
+    @Param('id') id: string,
+    @Query('expires') expires: string,
+    @Query('token') token: string,
+  ) {
+    return this.ridersService.signedDocumentAccess(id, expires, token);
   }
 
   @Post('jobs/:id/accept')

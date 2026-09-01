@@ -60,6 +60,11 @@ export class AdminController {
     return this.adminService.updateRiderStatus(actor, id, { approvalStatus: 'APPROVED', suspended: false }, input.reason);
   }
 
+  @Get('riders/:id/documents')
+  async riderDocuments(@CurrentUser() actor: User, @Param('id') id: string) {
+    return this.adminService.riderDocuments(actor, id);
+  }
+
   @Patch('riders/:id/status')
   @RateLimit({ key: 'admin.rider_status', limit: 30, windowMs: 60 * 1000 })
   async riderStatus(@CurrentUser() actor: User, @Param('id') id: string, @Body() body: unknown) {

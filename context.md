@@ -158,8 +158,11 @@ Not yet implemented:
 
 - Real payment provider integration.
 - Real payment provider refund API calls.
-- Real S3-compatible proof/document storage and streaming.
-- Signed rider document URLs.
+- S3-compatible private object key abstraction with local mock signed uploads.
+- Signed proof upload URL endpoint.
+- Signed rider document URLs for rider/admin views.
+- Retention cleanup service/job for proof and rider document file refs.
+- Provider-backed S3 streaming remains to be added when storage provider is selected.
 - Full pricing/service-zone admin configuration.
 - Full admin reports and payment/refund monitoring screens.
 - Business delivery reports/export.
@@ -208,4 +211,4 @@ Completed in this slice:
    - stale dispatch/admin attention
 5. Wire those metrics into the admin dashboard.
 
-Next recommended slice after verification: real S3-compatible proof/document storage and signed upload flow.
+Current recommended slice after storage verification: provider-backed file streaming/upload integration or production observability hardening, depending on whether the storage provider has been selected.

@@ -356,9 +356,15 @@ The current reporting and cache foundation includes:
 - `GET /api/v1/admin/reports/operations`
 - admin dashboard metrics wired to real API data
 
+Current storage foundation includes:
+
+- S3-compatible private object key abstraction
+- signed proof upload URL endpoint
+- signed rider document upload/list/read URLs
+- local mock signed upload route
+- proof/document retention cleanup service and job entry point
+
 Next spec gap:
 
-- real S3-compatible proof/document object storage
-- signed upload URLs
-- signed rider document URLs
-- retention cleanup jobs
+- provider-backed S3-compatible upload/download streaming
+- final proof/document retention periods

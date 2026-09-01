@@ -18,6 +18,7 @@ Public endpoints:
 - `POST /auth/verify-otp`
 - `POST /payments/webhooks/mock`
 - `GET /proofs/:id/file`
+- `PUT /storage/mock-upload`
 - `GET /health`
 
 Protected endpoints require:
@@ -165,10 +166,44 @@ GET /proofs/:id/file?expires=<unix_ms>&token=<signature>
 
 The signed proof file endpoint is public from the auth guard perspective because the signed URL itself is the access token. Clients should first request proof metadata through an authorized delivery endpoint, then use the returned `signedUrl`. Local development returns private-file metadata instead of streaming a real S3 object.
 
+### Signed Proof Upload URL
+
+```http
+POST /proofs/upload-url
+```
+
+```json
+{
+  "deliveryId": "delivery_uuid",
+  "type": "PHOTO",
+  "fileName": "drop-proof.jpg",
+  "contentType": "image/jpeg"
+}
+```
+
+Returns a private object key and short-lived signed `PUT` upload URL. Proof object keys use:
+
+```text
+private/proofs/<deliveryId>/<uuid>-<safe-file-name>
+```
+
+Clients upload to the signed URL, then submit the returned object key as `photoObjectKey` or `signatureObjectKey` during the rider proof action.
+
+### Local Mock Upload
+
+```http
+PUT /storage/mock-upload?key=<objectKey>&contentType=<contentType>&expires=<unix_ms>&token=<signature>
+```
+
+Local development verifies the upload signature and returns stored-object metadata. Production S3-compatible storage should replace this with provider-generated pre-signed URLs without changing the client proof flow.
+
 ## Rider Endpoints
 
 - `PATCH /rider/availability`
 - `POST /rider/location`
+- `GET /rider/documents`
+- `POST /rider/documents/upload-url`
+- `GET /rider/documents/:id/file`
 - `GET /rider/jobs/offers`
 - `POST /rider/jobs/:id/accept`
 - `POST /rider/jobs/:id/reject`
@@ -178,7 +213,25 @@ The signed proof file endpoint is public from the auth guard perspective because
 - `POST /rider/jobs/:id/delivered`
 - `GET /rider/earnings`
 
-Delivery completion requires OTP, photo URL, or signature URL.
+Delivery completion requires OTP, `photoObjectKey`, `signatureObjectKey`, photo URL, or signature URL. New clients should use private object keys instead of public URLs.
+
+Rider document upload URL requests:
+
+```json
+{
+  "type": "DRIVING_LICENSE",
+  "fileName": "license.pdf",
+  "contentType": "application/pdf"
+}
+```
+
+Rider document object keys use:
+
+```text
+private/rider-documents/<riderId>/<uuid>-<safe-file-name>
+```
+
+Rider document list responses return sanitized metadata and a short-lived signed read URL. Raw object keys are not returned.
 
 ## Admin Endpoints
 
@@ -189,6 +242,7 @@ Delivery completion requires OTP, photo URL, or signature URL.
 - `POST /admin/deliveries/:id/cancel`
 - `POST /admin/deliveries/:id/mark-exception`
 - `POST /admin/riders/:id/approve`
+- `GET /admin/riders/:id/documents`
 - `PATCH /admin/riders/:id/status`
 - `PATCH /admin/businesses/:id/status`
 - `GET /admin/support/tickets`
@@ -305,6 +359,10 @@ Implemented for the functional spine:
 - Sanitized proof metadata with short-lived signed file URLs
 - Cache policy and Redis-backed admin operations report
 - Admin dashboard operations metrics
+- S3-compatible private object key abstraction with local mock signed uploads
+- Signed proof upload URL endpoint
+- Signed rider document URLs for rider/admin views
+- Proof and rider document retention cleanup service/job
 
 Not yet implemented:
 
@@ -312,5 +370,4 @@ Not yet implemented:
 - Real provider refund API calls
 - Full pricing/service-zone admin configuration
 - Full admin report exports and payment/refund monitoring screens
-- Real S3-compatible proof/document object storage and streaming
-- Signed rider document URLs
+- Provider-backed S3-compatible upload/download streaming

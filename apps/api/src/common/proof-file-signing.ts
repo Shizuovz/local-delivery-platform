@@ -18,6 +18,6 @@ export function verifyProofFileToken(proofId: string, expires: number, token: st
 }
 
 function proofFileToken(proofId: string, expires: number) {
-  const secret = process.env.PROOF_FILE_SIGNING_SECRET ?? 'dev-proof-file-secret';
-  return createHmac('sha256', secret).update(`${proofId}:${expires}`).digest('hex');
+  const secret = process.env.OBJECT_STORAGE_SIGNING_SECRET ?? process.env.PROOF_FILE_SIGNING_SECRET ?? 'dev-private-file-secret';
+  return createHmac('sha256', secret).update(`read:/api/v1/proofs/${proofId}/file:${proofId}:${expires}`).digest('hex');
 }

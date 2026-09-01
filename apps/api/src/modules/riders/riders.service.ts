@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { DeliveryStatus, Proof, RiderAvailabilityStatus, User } from '@local-delivery/types';
+import { DeliveryStatus, Proof, RiderAvailabilityStatus, RiderDocument, SignedUpload, User } from '@local-delivery/types';
 import { Prisma } from '@local-delivery/database';
 import { ForbiddenError, NotFoundError } from '../../common/domain-errors';
 import { InMemoryStore } from '../../common/in-memory-store';
+import { ObjectStorageService } from '../../common/object-storage.service';
 import { PrismaService } from '../../common/prisma.service';
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { DispatchService } from '../dispatch/dispatch.service';
@@ -14,6 +15,7 @@ export class RidersService {
     private readonly deliveriesService: DeliveriesService,
     private readonly dispatchService: DispatchService,
     private readonly prisma: PrismaService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   setAvailability(actor: User, online: boolean) {
@@ -48,6 +50,80 @@ export class RidersService {
 
     this.requireRider(actor);
     return this.dispatchService.findOffersForRider(actor.id);
+  }
+
+  documents(actor: User) {
+    if (this.prisma.isEnabled()) {
+      return this.documentsWithPrisma(actor);
+    }
+
+    this.requireRider(actor);
+    return [...this.store.riderDocuments.values()]
+      .filter((document) => document.riderId === actor.id)
+      .map((document) => this.toRiderDocument(document));
+  }
+
+  async createDocumentUploadUrl(
+    actor: User,
+    input: { type: string; fileName: string; contentType: string; expiresAt?: string },
+  ): Promise<{ document: RiderDocument; upload: SignedUpload }> {
+    if (this.prisma.isEnabled()) {
+      return this.createDocumentUploadUrlWithPrisma(actor, input);
+    }
+
+    this.requireRider(actor);
+    const upload = this.storage.createSignedUpload({
+      scope: 'rider-documents',
+      ownerId: actor.id,
+      fileName: input.fileName,
+      contentType: input.contentType,
+    });
+    const document: RiderDocument = {
+      id: this.store.createId('doc'),
+      riderId: actor.id,
+      type: input.type,
+      status: 'PENDING',
+      expiresAt: input.expiresAt,
+      retentionExpiresAt: this.riderDocumentRetentionExpiresAt().toISOString(),
+      createdAt: this.store.now(),
+    };
+    const storedDocument = { ...document, fileUrl: upload.objectKey };
+    this.store.riderDocuments.set(document.id, storedDocument);
+    this.store.writeAudit(actor.id, 'rider_document.upload_url.create', 'rider_document', document.id, undefined, {
+      type: document.type,
+      objectKey: upload.objectKey,
+    });
+    return { document: this.toRiderDocument(storedDocument), upload };
+  }
+
+  async signedDocumentAccess(documentId: string, expires: string, token: string) {
+    const expiresAt = Number(expires);
+    const path = `/api/v1/rider/documents/${documentId}/file`;
+    if (!this.storage.verifyReadUrl(path, documentId, expiresAt, token)) {
+      throw new ForbiddenError('Invalid or expired rider document URL');
+    }
+
+    if (this.prisma.isEnabled()) {
+      const document = await this.prisma.riderDocument.findUnique({ where: { id: documentId } });
+      if (!document?.fileUrl) throw new NotFoundError('Rider document file not found');
+      return {
+        documentId,
+        type: document.type,
+        storageProvider: 'mock-private',
+        fileRef: document.fileUrl,
+        expiresAt: new Date(expiresAt).toISOString(),
+      };
+    }
+
+    const document = this.store.riderDocuments.get(documentId);
+    if (!document?.fileUrl) throw new NotFoundError('Rider document file not found');
+    return {
+      documentId,
+      type: document.type,
+      storageProvider: 'mock-private',
+      fileRef: document.fileUrl,
+      expiresAt: new Date(expiresAt).toISOString(),
+    };
   }
 
   accept(actor: User, assignmentId: string) {
@@ -94,16 +170,16 @@ export class RidersService {
     return this.deliveriesService.transition(deliveryId, DeliveryStatus.ARRIVED_DROP, actor.id, 'Rider arrived drop');
   }
 
-  delivered(actor: User, assignmentId: string, proof: { otp?: string; photoUrl?: string; signatureUrl?: string }) {
+  delivered(actor: User, assignmentId: string, proof: { otp?: string; photoUrl?: string; signatureUrl?: string; photoObjectKey?: string; signatureObjectKey?: string }) {
     if (this.prisma.isEnabled()) {
       return this.deliveredWithPrisma(actor, assignmentId, proof);
     }
 
     const deliveryId = this.deliveryIdForAcceptedAssignment(actor, assignmentId);
-    if (proof.otp !== '123456' && !proof.photoUrl && !proof.signatureUrl) {
+    if (proof.otp !== '123456' && !proof.photoUrl && !proof.signatureUrl && !proof.photoObjectKey && !proof.signatureObjectKey) {
       throw new ForbiddenError('Delivery proof is required');
     }
-    this.createProof(actor, deliveryId, proof.otp === '123456' ? 'OTP' : proof.photoUrl ? 'PHOTO' : 'SIGNATURE', proof);
+    this.createProof(actor, deliveryId, proof.otp === '123456' ? 'OTP' : proof.photoUrl || proof.photoObjectKey ? 'PHOTO' : 'SIGNATURE', proof);
     const delivery = this.deliveriesService.transition(deliveryId, DeliveryStatus.DELIVERED, actor.id, 'Delivery proof verified');
     const rider = this.store.riders.get(actor.id);
     if (rider) rider.availabilityStatus = RiderAvailabilityStatus.ONLINE_IDLE;
@@ -136,7 +212,7 @@ export class RidersService {
       deliveryId,
       type,
       createdBy: actor.id,
-      fileUrl: typeof metadata.photoUrl === 'string' ? metadata.photoUrl : typeof metadata.signatureUrl === 'string' ? metadata.signatureUrl : undefined,
+      fileUrl: this.proofFileRef(metadata),
       otpVerified: type === 'OTP',
       metadata,
       retentionExpiresAt: this.proofRetentionExpiresAt().toISOString(),
@@ -206,12 +282,12 @@ export class RidersService {
     return this.deliveriesService.transition(deliveryId, DeliveryStatus.ARRIVED_DROP, actor.id, 'Rider arrived drop');
   }
 
-  private async deliveredWithPrisma(actor: User, assignmentId: string, proof: { otp?: string; photoUrl?: string; signatureUrl?: string }) {
+  private async deliveredWithPrisma(actor: User, assignmentId: string, proof: { otp?: string; photoUrl?: string; signatureUrl?: string; photoObjectKey?: string; signatureObjectKey?: string }) {
     const deliveryId = await this.deliveryIdForAcceptedAssignmentWithPrisma(actor, assignmentId);
-    if (proof.otp !== '123456' && !proof.photoUrl && !proof.signatureUrl) {
+    if (proof.otp !== '123456' && !proof.photoUrl && !proof.signatureUrl && !proof.photoObjectKey && !proof.signatureObjectKey) {
       throw new ForbiddenError('Delivery proof is required');
     }
-    await this.createProofWithPrisma(actor, deliveryId, proof.otp === '123456' ? 'OTP' : proof.photoUrl ? 'PHOTO' : 'SIGNATURE', proof);
+    await this.createProofWithPrisma(actor, deliveryId, proof.otp === '123456' ? 'OTP' : proof.photoUrl || proof.photoObjectKey ? 'PHOTO' : 'SIGNATURE', proof);
     const delivery = await this.deliveriesService.transition(deliveryId, DeliveryStatus.DELIVERED, actor.id, 'Delivery proof verified');
     await this.prisma.riderProfile.update({
       where: { userId: actor.id },
@@ -257,7 +333,7 @@ export class RidersService {
         deliveryId,
         type,
         createdBy: actor.id,
-        fileUrl: typeof metadata.photoUrl === 'string' ? metadata.photoUrl : typeof metadata.signatureUrl === 'string' ? metadata.signatureUrl : undefined,
+        fileUrl: this.proofFileRef(metadata),
         otpVerified: type === 'OTP',
         metadata: metadata as Prisma.InputJsonObject,
         retentionExpiresAt: this.proofRetentionExpiresAt(),
@@ -278,6 +354,91 @@ export class RidersService {
   private proofRetentionExpiresAt() {
     const days = Number(process.env.PROOF_RETENTION_DAYS ?? 90);
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  }
+
+  private riderDocumentRetentionExpiresAt() {
+    const days = Number(process.env.RIDER_DOCUMENT_RETENTION_DAYS ?? 365);
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  }
+
+  private proofFileRef(metadata: Record<string, unknown>) {
+    for (const key of ['photoObjectKey', 'signatureObjectKey', 'photoUrl', 'signatureUrl']) {
+      const value = metadata[key];
+      if (typeof value === 'string') return value;
+    }
+    return undefined;
+  }
+
+  private async documentsWithPrisma(actor: User) {
+    await this.requireRiderWithPrisma(actor);
+    const documents = await this.prisma.riderDocument.findMany({
+      where: { riderId: actor.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    return documents.map((document) => this.toRiderDocument({
+      id: document.id,
+      riderId: document.riderId,
+      type: document.type,
+      status: document.status as RiderDocument['status'],
+      signedUrl: document.fileUrl ?? undefined,
+      expiresAt: document.expiresAt?.toISOString(),
+      retentionExpiresAt: document.retentionExpiresAt?.toISOString(),
+      createdAt: document.createdAt.toISOString(),
+    }));
+  }
+
+  private async createDocumentUploadUrlWithPrisma(
+    actor: User,
+    input: { type: string; fileName: string; contentType: string; expiresAt?: string },
+  ): Promise<{ document: RiderDocument; upload: SignedUpload }> {
+    await this.requireRiderWithPrisma(actor);
+    const upload = this.storage.createSignedUpload({
+      scope: 'rider-documents',
+      ownerId: actor.id,
+      fileName: input.fileName,
+      contentType: input.contentType,
+    });
+    const document = await this.prisma.riderDocument.create({
+      data: {
+        riderId: actor.id,
+        type: input.type,
+        fileUrl: upload.objectKey,
+        status: 'PENDING',
+        expiresAt: input.expiresAt ? new Date(input.expiresAt) : undefined,
+        retentionExpiresAt: this.riderDocumentRetentionExpiresAt(),
+      },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: 'rider_document.upload_url.create',
+        entityType: 'rider_document',
+        entityId: document.id,
+        metadata: { type: document.type, objectKey: upload.objectKey },
+      },
+    });
+    return {
+      document: this.toRiderDocument({
+        id: document.id,
+        riderId: document.riderId,
+        type: document.type,
+        status: document.status as RiderDocument['status'],
+        signedUrl: document.fileUrl ?? undefined,
+        expiresAt: document.expiresAt?.toISOString(),
+        retentionExpiresAt: document.retentionExpiresAt?.toISOString(),
+        createdAt: document.createdAt.toISOString(),
+      }),
+      upload,
+    };
+  }
+
+  private toRiderDocument(document: RiderDocument & { fileUrl?: string }): RiderDocument {
+    const { signedUrl, fileUrl, ...safeDocument } = document;
+    const fileRef = fileUrl ?? signedUrl;
+    return {
+      ...safeDocument,
+      signedUrl: fileRef ? this.storage.signReadUrl(`/api/v1/rider/documents/${document.id}/file`, document.id) : undefined,
+    };
   }
 
   private async requireRiderWithPrisma(actor: User) {

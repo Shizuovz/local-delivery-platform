@@ -43,13 +43,22 @@ Final retention periods must be approved before launch. Use these development de
 | Delivery status history | Retain as operational/legal record. |
 | Audit logs | Retain as operational/security record. |
 | Proof files | Local default 90 days via `PROOF_RETENTION_DAYS`; final dispute-window retention must be approved before launch. Serve through signed URLs only. |
-| Rider documents | Retain while rider is active and for required compliance period after offboarding. |
+| Rider documents | Local default 365 days via `RIDER_DOCUMENT_RETENTION_DAYS`; final active/offboarding compliance period must be approved before launch. Serve through signed URLs only. |
 | Payment/refund records | Retain according to accounting/provider requirements. |
 | Support tickets | Retain through dispute/accounting window, then minimize if possible. |
 
 ## Signed URL Requirement
 
-Private files must not be public bucket URLs. Proof photos, signatures, rider documents, and sensitive attachments must be served through short-lived signed URLs after authorization checks.
+Private files must not be public bucket URLs. Proof photos, signatures, rider documents, and sensitive attachments must be stored under private object keys and served through short-lived signed URLs after authorization checks.
+
+Private object key conventions:
+
+```text
+private/proofs/<deliveryId>/<uuid>-<safe-file-name>
+private/rider-documents/<riderId>/<uuid>-<safe-file-name>
+```
+
+Retention cleanup removes private file references from expired proof/document records. Operational metadata remains available for history, audit, and dispute context.
 
 ## Location Rules
 
@@ -61,6 +70,6 @@ Private files must not be public bucket URLs. Proof photos, signatures, rider do
 ## Local Development Notes
 
 - Local dev may use mock OTP and mock payment.
-- Local dev may use mock private proof file references, but API responses must expose only sanitized proof metadata and signed access URLs.
+- Local dev may use mock private proof/document file references, but API responses must expose only sanitized metadata and signed access URLs.
 - Local dev must not contain real customer data, rider documents, or payment secrets.
 - `.env` files and provider keys must not be committed.

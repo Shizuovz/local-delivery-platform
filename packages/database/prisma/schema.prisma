@@ -117,14 +117,18 @@ model RiderProfile {
 }
 
 model RiderDocument {
-  id        String       @id @default(uuid())
-  riderId   String
-  rider     RiderProfile @relation(fields: [riderId], references: [userId])
-  type      String
-  fileUrl   String
-  status    String       @default("PENDING")
-  expiresAt DateTime?
-  createdAt DateTime     @default(now())
+  id                 String       @id @default(uuid())
+  riderId            String
+  rider              RiderProfile @relation(fields: [riderId], references: [userId])
+  type               String
+  fileUrl            String?
+  status             String       @default("PENDING")
+  expiresAt          DateTime?
+  retentionExpiresAt DateTime?
+  createdAt          DateTime     @default(now())
+
+  @@index([riderId, createdAt])
+  @@index([retentionExpiresAt])
 }
 
 model Business {

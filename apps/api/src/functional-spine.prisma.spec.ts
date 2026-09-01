@@ -3,6 +3,8 @@ import { ActorService } from './common/actor.service';
 import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
 import { CacheService } from './common/cache.service';
+import { ObjectStorageService } from './common/object-storage.service';
+import { PrivateFileRetentionService } from './common/private-file-retention.service';
 import { quoteDeliverySchema } from '@local-delivery/validation';
 import { AuthService } from './modules/auth/auth.service';
 import { AdminService } from './modules/admin/admin.service';
@@ -43,15 +45,17 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const prisma = new PrismaService();
   const dispatchQueue = new DispatchQueueService();
   const dispatch = new DispatchService(store, prisma);
+  const storage = new ObjectStorageService();
   const deliveries = new DeliveriesService(store, dispatch, prisma);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
-  const proofsService = new ProofsService(store, prisma);
+  const proofsService = new ProofsService(store, prisma, deliveries, storage);
   const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
-  const riders = new RidersService(store, deliveries, dispatch, prisma);
+  const riders = new RidersService(store, deliveries, dispatch, prisma, storage);
   const actors = new ActorService(store, prisma);
   const auth = new AuthService(store, prisma);
   const cache = noCache();
-  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache);
+  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache, storage);
+  const privateFileRetention = new PrivateFileRetentionService(store, prisma);
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -286,6 +290,72 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     );
     expect(access.fileRef).toBe('https://private.example/proof.jpg');
     await expect(proofsService.signedFileAccess(photoProof!.id, '1', 'bad-token')).rejects.toThrow('Invalid or expired proof file URL');
+  });
+
+  it('persists private proof object keys from signed upload sessions', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const created = await createConfirmedDelivery(customer);
+    const upload = await proofsService.createUploadUrl(customer, {
+      deliveryId: created.delivery.id,
+      type: 'PHOTO',
+      fileName: 'drop-proof.webp',
+      contentType: 'image/webp',
+    });
+    const paid = await payments.confirmMockPayment(customer, created.payment.id, `evt-proof-object-${created.delivery.id}`);
+    const accepted = await riders.accept(rider, paid.dispatch!.offeredAssignment!.id);
+    await riders.arrivedPickup(rider, accepted.assignment.id);
+    await riders.pickedUp(rider, accepted.assignment.id, 'PKUP-123');
+    await riders.arrivedDrop(rider, accepted.assignment.id);
+    await riders.delivered(rider, accepted.assignment.id, { photoObjectKey: upload.objectKey });
+
+    const detail = await deliveries.getDeliveryForActor(customer, created.delivery.id);
+    const proof = detail.proofs.find((item) => item.type === 'PHOTO');
+    const signedUrl = new URL(proof!.signedUrl!, 'http://localhost:4000');
+    const access = await proofsService.signedFileAccess(
+      proof!.id,
+      signedUrl.searchParams.get('expires')!,
+      signedUrl.searchParams.get('token')!,
+    );
+
+    expect(upload.objectKey).toMatch(/^private\/proofs\/.+\/.+-drop-proof\.webp$/);
+    expect(proof?.fileUrl).toBeUndefined();
+    expect(access.fileRef).toBe(upload.objectKey);
+  });
+
+  it('persists signed rider document URLs and expires private file references', async () => {
+    const rider = await demoRiderActor();
+    const admin = await adminActor();
+    const result = await riders.createDocumentUploadUrl(rider, {
+      type: 'DRIVING_LICENSE',
+      fileName: 'license.pdf',
+      contentType: 'application/pdf',
+    });
+    const riderDocuments = await riders.documents(rider);
+    const adminDocuments = await adminService.riderDocuments(admin, rider.id);
+    const riderDocument = riderDocuments.find((document) => document.id === result.document.id)!;
+    const adminDocument = adminDocuments.find((document) => document.id === result.document.id)!;
+    const signedUrl = new URL(riderDocument.signedUrl!, 'http://localhost:4000');
+    const access = await riders.signedDocumentAccess(
+      riderDocument.id,
+      signedUrl.searchParams.get('expires')!,
+      signedUrl.searchParams.get('token')!,
+    );
+
+    expect(result.upload.objectKey).toMatch(/^private\/rider-documents\/.+\/.+-license\.pdf$/);
+    expect(adminDocument).toEqual(expect.objectContaining({ type: 'DRIVING_LICENSE', signedUrl: expect.any(String) }));
+    expect(access.fileRef).toBe(result.upload.objectKey);
+
+    await prisma.riderDocument.update({
+      where: { id: result.document.id },
+      data: { retentionExpiresAt: new Date('2024-01-01T00:00:00.000Z') },
+    });
+    const cleanup = await privateFileRetention.cleanupExpiredPrivateFiles(new Date('2025-01-01T00:00:00.000Z'));
+    const expired = await prisma.riderDocument.findUniqueOrThrow({ where: { id: result.document.id } });
+
+    expect(cleanup.riderDocumentsExpired).toBeGreaterThanOrEqual(1);
+    expect(expired.fileUrl).toBeNull();
+    expect(expired.status).toBe('EXPIRED');
   });
 
   it('prevents two riders from accepting the same delivery', async () => {

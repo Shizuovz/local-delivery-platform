@@ -7,11 +7,13 @@ import {
   Proof,
   RefundStatus,
   RiderAvailabilityStatus,
+  RiderDocument,
   User,
 } from '@local-delivery/types';
 import { CacheService } from '../../common/cache.service';
 import { ForbiddenError, NotFoundError } from '../../common/domain-errors';
 import { InMemoryStore } from '../../common/in-memory-store';
+import { ObjectStorageService } from '../../common/object-storage.service';
 import { signProofFileUrl } from '../../common/proof-file-signing';
 import { PrismaService } from '../../common/prisma.service';
 import { DeliveriesService } from '../deliveries/deliveries.service';
@@ -25,6 +27,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly deliveriesService: DeliveriesService,
     private readonly cache: CacheService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   listDeliveries(actor: User) {
@@ -140,6 +143,33 @@ export class AdminService {
       availabilityStatus: rider.availabilityStatus,
     });
     return rider;
+  }
+
+  async riderDocuments(actor: User, riderId: string) {
+    this.requireAdmin(actor);
+    if (this.prisma.isEnabled()) {
+      const rider = await this.prisma.riderProfile.findUnique({ where: { userId: riderId } });
+      if (!rider) throw new NotFoundError('Rider not found');
+      const documents = await this.prisma.riderDocument.findMany({
+        where: { riderId },
+        orderBy: { createdAt: 'desc' },
+      });
+      return documents.map((document) => this.toRiderDocument({
+        id: document.id,
+        riderId: document.riderId,
+        type: document.type,
+        status: document.status as RiderDocument['status'],
+        signedUrl: document.fileUrl ?? undefined,
+        expiresAt: document.expiresAt?.toISOString(),
+        retentionExpiresAt: document.retentionExpiresAt?.toISOString(),
+        createdAt: document.createdAt.toISOString(),
+      }));
+    }
+
+    if (!this.store.riders.has(riderId)) throw new NotFoundError('Rider not found');
+    return [...this.store.riderDocuments.values()]
+      .filter((document) => document.riderId === riderId)
+      .map((document) => this.toRiderDocument(document));
   }
 
   updateBusinessStatus(actor: User, businessId: string, status: 'PENDING' | 'APPROVED' | 'SUSPENDED', reason: string) {
@@ -578,6 +608,15 @@ export class AdminService {
     return {
       ...safeProof,
       signedUrl: fileUrl ? signProofFileUrl(proof.id) : undefined,
+    };
+  }
+
+  private toRiderDocument(document: RiderDocument & { fileUrl?: string }): RiderDocument {
+    const { signedUrl, fileUrl, ...safeDocument } = document;
+    const fileRef = fileUrl ?? signedUrl;
+    return {
+      ...safeDocument,
+      signedUrl: fileRef ? this.storage.signReadUrl(`/api/v1/rider/documents/${document.id}/file`, document.id) : undefined,
     };
   }
 }
