@@ -109,6 +109,37 @@ async function main() {
       radiusKm: 12,
     },
   });
+
+  for (const deliveryType of ['SEND', 'LIMITED_FETCH', 'BUSINESS_DELIVERY'] as const) {
+    await prisma.pricingRule.upsert({
+      where: { code: `DEFAULT-${deliveryType}` },
+      update: {
+        active: true,
+        baseFeeMinor: 3000,
+        perKmFeeMinor: 1000,
+        mediumPackageFeeMinor: 2000,
+        largePackageFeeMinor: 5000,
+        zoneSurchargeMinor: 0,
+        platformFeeMinor: 500,
+        taxBps: 0,
+        discountMinor: 0,
+      },
+      create: {
+        code: `DEFAULT-${deliveryType}`,
+        deliveryType,
+        active: true,
+        currency: 'INR',
+        baseFeeMinor: 3000,
+        perKmFeeMinor: 1000,
+        mediumPackageFeeMinor: 2000,
+        largePackageFeeMinor: 5000,
+        zoneSurchargeMinor: 0,
+        platformFeeMinor: 500,
+        taxBps: 0,
+        discountMinor: 0,
+      },
+    });
+  }
 }
 
 main()

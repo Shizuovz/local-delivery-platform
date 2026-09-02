@@ -13,12 +13,14 @@ import {
   DeliveryType,
   Payment,
   PaymentStatus,
+  PricingRule,
   Proof,
   Refund,
   RiderDocument,
   RiderAvailabilityStatus,
   RiderLocation,
   RiderProfile,
+  ServiceZone,
   SupportTicket,
   User,
   UserRole,
@@ -43,6 +45,8 @@ export class InMemoryStore {
   readonly businessSettlements = new Map<string, BusinessSettlement>();
   readonly locations = new Map<string, RiderLocation>();
   readonly quotes = new Map<string, DeliveryQuote>();
+  readonly pricingRules = new Map<string, PricingRule>();
+  readonly serviceZones = new Map<string, ServiceZone>();
   readonly deliveries = new Map<string, Delivery>();
   readonly deliveryItems = new Map<string, DeliveryItem>();
   readonly deliveryIdempotency = new Map<string, string>();
@@ -149,6 +153,38 @@ export class InMemoryStore {
       lng: 77.5946,
       recordedAt: this.now(),
     });
+
+    this.serviceZones.set('BLR-CENTRAL', {
+      id: this.createId('zone'),
+      code: 'BLR-CENTRAL',
+      name: 'Bengaluru Central Demo Zone',
+      city: 'Bengaluru',
+      active: true,
+      centerLat: 12.9716,
+      centerLng: 77.5946,
+      radiusKm: 12,
+    });
+
+    for (const deliveryType of [DeliveryType.SEND, DeliveryType.LIMITED_FETCH, DeliveryType.BUSINESS_DELIVERY]) {
+      const code = `DEFAULT-${deliveryType}`;
+      this.pricingRules.set(code, {
+        id: this.createId('price'),
+        code,
+        deliveryType,
+        active: true,
+        currency: 'INR',
+        baseFeeMinor: 3000,
+        perKmFeeMinor: 1000,
+        mediumPackageFeeMinor: 2000,
+        largePackageFeeMinor: 5000,
+        zoneSurchargeMinor: 0,
+        platformFeeMinor: 500,
+        taxBps: 0,
+        discountMinor: 0,
+        createdAt: this.now(),
+        updatedAt: this.now(),
+      });
+    }
   }
 
   roleForDevToken(token?: string): UserRole {

@@ -180,6 +180,27 @@ model ServiceZone {
   addresses Address[]
 }
 
+model PricingRule {
+  id                     String       @id @default(uuid())
+  code                   String       @unique
+  deliveryType           DeliveryType
+  zoneCode               String?
+  active                 Boolean      @default(true)
+  currency               String       @default("INR")
+  baseFeeMinor           Int
+  perKmFeeMinor          Int
+  mediumPackageFeeMinor  Int          @default(2000)
+  largePackageFeeMinor   Int          @default(5000)
+  zoneSurchargeMinor     Int          @default(0)
+  platformFeeMinor       Int          @default(500)
+  taxBps                 Int          @default(0)
+  discountMinor          Int          @default(0)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  @@index([deliveryType, zoneCode, active])
+}
+
 model Delivery {
   id                    String                  @id @default(uuid())
   type                  DeliveryType

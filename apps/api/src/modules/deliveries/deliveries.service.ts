@@ -22,6 +22,8 @@ import { InMemoryStore } from '../../common/in-memory-store';
 import { signProofFileUrl } from '../../common/proof-file-signing';
 import { PrismaService } from '../../common/prisma.service';
 import { DispatchService } from '../dispatch/dispatch.service';
+import { PricingService } from '../pricing/pricing.service';
+import { ServiceZonesService } from '../service-zones/service-zones.service';
 import { CreateDeliveryDto, CreateQuoteDto } from './deliveries.dto';
 
 interface CreatedDeliveryResult {
@@ -54,6 +56,8 @@ export class DeliveriesService {
     private readonly store: InMemoryStore,
     private readonly dispatchService: DispatchService,
     private readonly prisma: PrismaService,
+    private readonly pricingService: PricingService,
+    private readonly serviceZonesService: ServiceZonesService,
   ) {}
 
   createQuote(actor: User, input: CreateQuoteDto): DeliveryQuote | Promise<DeliveryQuote> {
@@ -74,14 +78,14 @@ export class DeliveriesService {
       id: this.store.createId('addr'),
       ...input.dropAddress,
     };
+    const zone = this.serviceZonesService.zoneForPairFromMemory(input.pickupAddress, input.dropAddress);
     const distanceMeters = Math.max(1000, this.distanceMeters(pickup.lat, pickup.lng, drop.lat, drop.lng));
-    const baseFeeMinor = 3000;
-    const distanceFeeMinor = Math.ceil(distanceMeters / 1000) * 1000;
-    const packageFeeMinor = input.item.packageClass === 'LARGE' ? 5000 : input.item.packageClass === 'MEDIUM' ? 2000 : 0;
-    const platformFeeMinor = 500;
-    const taxMinor = 0;
-    const discountMinor = 0;
-    const amountMinor = baseFeeMinor + distanceFeeMinor + packageFeeMinor + platformFeeMinor + taxMinor - discountMinor;
+    const pricing = this.pricingService.calculateFromMemory({
+      deliveryType: input.type === 'LIMITED_FETCH' ? DeliveryType.LIMITED_FETCH : DeliveryType.SEND,
+      packageClass: input.item.packageClass,
+      distanceMeters,
+      zoneCode: zone.code,
+    });
 
     const quote: DeliveryQuote = {
       id: this.store.createId('quote'),
@@ -90,18 +94,11 @@ export class DeliveriesService {
       pickupAddressId: pickup.id,
       dropAddressId: drop.id,
       distanceMeters,
-      amountMinor,
-      currency: 'INR',
+      amountMinor: pricing.amountMinor,
+      currency: pricing.currency,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      pricing: {
-        baseFeeMinor,
-        distanceFeeMinor,
-        packageFeeMinor,
-        zoneSurchargeMinor: 0,
-        platformFeeMinor,
-        taxMinor,
-        discountMinor,
-      },
+      metadata: { ...this.quoteMetadata(input), pricingRuleCode: pricing.pricingRuleCode, zoneCode: pricing.zoneCode },
+      pricing,
     };
 
     this.store.quotes.set(quote.id, quote);
@@ -283,17 +280,17 @@ export class DeliveriesService {
 
   private async createQuoteWithPrisma(actor: User, input: CreateQuoteDto): Promise<DeliveryQuote> {
     this.assertLimitedFetchPolicy(input);
+    const zone = await this.serviceZonesService.zoneForPair(input.pickupAddress, input.dropAddress);
     const distanceMeters = Math.max(
       1000,
       this.distanceMeters(input.pickupAddress.lat, input.pickupAddress.lng, input.dropAddress.lat, input.dropAddress.lng),
     );
-    const baseFeeMinor = 3000;
-    const distanceFeeMinor = Math.ceil(distanceMeters / 1000) * 1000;
-    const packageFeeMinor = input.item.packageClass === 'LARGE' ? 5000 : input.item.packageClass === 'MEDIUM' ? 2000 : 0;
-    const platformFeeMinor = 500;
-    const taxMinor = 0;
-    const discountMinor = 0;
-    const amountMinor = baseFeeMinor + distanceFeeMinor + packageFeeMinor + platformFeeMinor + taxMinor - discountMinor;
+    const pricing = await this.pricingService.calculate({
+      deliveryType: input.type === 'LIMITED_FETCH' ? DeliveryType.LIMITED_FETCH : DeliveryType.SEND,
+      packageClass: input.item.packageClass,
+      distanceMeters,
+      zoneCode: zone.code,
+    });
 
     const quote = await this.prisma.$transaction(async (tx) => {
       const pickup = await tx.address.create({
@@ -321,16 +318,16 @@ export class DeliveriesService {
           pickupAddressId: pickup.id,
           dropAddressId: drop.id,
           distanceMeters,
-          amountMinor,
-          currency: 'INR',
-          baseFeeMinor,
-          distanceFeeMinor,
-          packageFeeMinor,
-          zoneSurchargeMinor: 0,
-          platformFeeMinor,
-          taxMinor,
-          discountMinor,
-          metadata: this.quoteMetadata(input) as Prisma.InputJsonObject,
+          amountMinor: pricing.amountMinor,
+          currency: pricing.currency,
+          baseFeeMinor: pricing.baseFeeMinor,
+          distanceFeeMinor: pricing.distanceFeeMinor,
+          packageFeeMinor: pricing.packageFeeMinor,
+          zoneSurchargeMinor: pricing.zoneSurchargeMinor,
+          platformFeeMinor: pricing.platformFeeMinor,
+          taxMinor: pricing.taxMinor,
+          discountMinor: pricing.discountMinor,
+          metadata: { ...this.quoteMetadata(input), pricingRuleCode: pricing.pricingRuleCode, zoneCode: pricing.zoneCode } as Prisma.InputJsonObject,
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
       });
@@ -751,6 +748,7 @@ export class DeliveriesService {
     platformFeeMinor: number;
     taxMinor: number;
     discountMinor: number;
+    metadata?: unknown;
   }): DeliveryQuote {
     return {
       id: quote.id,
@@ -763,6 +761,7 @@ export class DeliveriesService {
       amountMinor: quote.amountMinor,
       currency: quote.currency,
       expiresAt: quote.expiresAt.toISOString(),
+      metadata: this.jsonObject(quote.metadata),
       pricing: {
         baseFeeMinor: quote.baseFeeMinor,
         distanceFeeMinor: quote.distanceFeeMinor,
@@ -773,6 +772,12 @@ export class DeliveriesService {
         discountMinor: quote.discountMinor,
       },
     };
+  }
+
+  private jsonObject(value: unknown): Record<string, unknown> | undefined {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined;
   }
 
   private toPayment(payment: {

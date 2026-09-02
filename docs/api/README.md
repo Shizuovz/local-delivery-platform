@@ -263,6 +263,14 @@ Rider document list responses return sanitized metadata and a short-lived signed
 - `PATCH /admin/support/tickets/:id`
 - `GET /admin/audit-logs`
 - `GET /admin/reports/operations`
+- `GET /admin/pricing-rules`
+- `POST /admin/pricing-rules`
+- `GET /admin/service-zones`
+- `POST /admin/service-zones`
+
+Public serviceability endpoint:
+
+- `GET /service-zones`
 
 Admin assign/reassign requests must include:
 
@@ -308,6 +316,45 @@ Support-ticket updates accept:
   "reason": "Customer confirmed address"
 }
 ```
+
+Admin pricing rule upsert requests accept:
+
+```json
+{
+  "code": "DEFAULT-SEND",
+  "deliveryType": "SEND",
+  "active": true,
+  "currency": "INR",
+  "baseFeeMinor": 3000,
+  "perKmFeeMinor": 1000,
+  "mediumPackageFeeMinor": 2000,
+  "largePackageFeeMinor": 5000,
+  "zoneSurchargeMinor": 0,
+  "platformFeeMinor": 500,
+  "taxBps": 0,
+  "discountMinor": 0,
+  "reason": "Update default SEND pricing"
+}
+```
+
+Zone-specific pricing rules may include `zoneCode`. New quotes use the active zone-specific rule first, then fall back to the active default rule for that delivery type. Existing quote snapshots are not recalculated after pricing edits.
+
+Admin service-zone upsert requests accept:
+
+```json
+{
+  "code": "BLR-CENTRAL",
+  "name": "Bengaluru Central",
+  "city": "Bengaluru",
+  "active": true,
+  "centerLat": 12.9716,
+  "centerLng": 77.5946,
+  "radiusKm": 12,
+  "reason": "Adjust launch service zone"
+}
+```
+
+Quote creation validates pickup and drop coordinates against active service zones before pricing. Service-zone and pricing edits require an admin role and create audit logs.
 
 ### Operations Report
 
@@ -373,6 +420,8 @@ Implemented for the functional spine:
 - Sanitized proof metadata with short-lived signed file URLs
 - Cache policy and Redis-backed admin operations report
 - Admin dashboard operations metrics
+- Admin-managed pricing rules with audited changes
+- Admin-managed service zones with public active-zone listing
 - S3-compatible private object key abstraction with local mock signed uploads
 - Provider-backed S3-compatible pre-signed upload/read URLs
 - Signed proof upload URL endpoint
@@ -386,7 +435,6 @@ Not yet implemented:
 
 - Real payment provider integration
 - Real provider refund API calls
-- Full pricing/service-zone admin configuration
 - Full admin report exports and payment/refund monitoring screens
 - Final storage provider selection and bucket/CORS policy
 - Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly

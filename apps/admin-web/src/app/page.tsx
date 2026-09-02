@@ -72,6 +72,21 @@ type RiderDocumentSummary = JsonRecord & {
   signedUrl?: string;
 };
 
+type PricingRuleSummary = JsonRecord & {
+  code?: string;
+  deliveryType?: string;
+  zoneCode?: string;
+  active?: boolean;
+  amountMinor?: number;
+};
+
+type ServiceZoneSummary = JsonRecord & {
+  code?: string;
+  name?: string;
+  city?: string;
+  active?: boolean;
+};
+
 type AdminOperationsReport = {
   generatedAt: string;
   cache: {
@@ -104,6 +119,33 @@ type AdminOperationsReport = {
   };
 };
 
+const DEFAULT_PRICING_RULE_JSON = JSON.stringify({
+  code: 'DEFAULT-SEND',
+  deliveryType: 'SEND',
+  active: true,
+  currency: 'INR',
+  baseFeeMinor: 3000,
+  perKmFeeMinor: 1000,
+  mediumPackageFeeMinor: 2000,
+  largePackageFeeMinor: 5000,
+  zoneSurchargeMinor: 0,
+  platformFeeMinor: 500,
+  taxBps: 0,
+  discountMinor: 0,
+  reason: DEFAULT_REASON,
+}, null, 2);
+
+const DEFAULT_SERVICE_ZONE_JSON = JSON.stringify({
+  code: 'BLR-CENTRAL',
+  name: 'Bengaluru Central',
+  city: 'Bengaluru',
+  active: true,
+  centerLat: 12.9716,
+  centerLng: 77.5946,
+  radiusKm: 12,
+  reason: DEFAULT_REASON,
+}, null, 2);
+
 export default function AdminOperationsPage() {
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
   const [phone, setPhone] = useState(DEFAULT_ADMIN_PHONE);
@@ -111,6 +153,8 @@ export default function AdminOperationsPage() {
   const [deliveries, setDeliveries] = useState<DeliverySummary[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
   const [riderDocuments, setRiderDocuments] = useState<RiderDocumentSummary[]>([]);
+  const [pricingRules, setPricingRules] = useState<PricingRuleSummary[]>([]);
+  const [serviceZones, setServiceZones] = useState<ServiceZoneSummary[]>([]);
   const [operationsReport, setOperationsReport] = useState<AdminOperationsReport | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [deliveryId, setDeliveryId] = useState('');
@@ -122,6 +166,8 @@ export default function AdminOperationsPage() {
   const [businessStatus, setBusinessStatus] = useState<'PENDING' | 'APPROVED' | 'SUSPENDED'>('APPROVED');
   const [riderApprovalStatus, setRiderApprovalStatus] = useState<'PENDING' | 'APPROVED' | 'REJECTED'>('APPROVED');
   const [riderSuspended, setRiderSuspended] = useState(false);
+  const [pricingRuleJson, setPricingRuleJson] = useState(DEFAULT_PRICING_RULE_JSON);
+  const [serviceZoneJson, setServiceZoneJson] = useState(DEFAULT_SERVICE_ZONE_JSON);
   const [status, setStatus] = useState('Ready');
   const [busy, setBusy] = useState(false);
   const [output, setOutput] = useState('No response yet.');
@@ -195,6 +241,34 @@ export default function AdminOperationsPage() {
   async function loadOperationsReport() {
     const result = await api<AdminOperationsReport>('/admin/reports/operations');
     setOperationsReport(result);
+  }
+
+  async function loadPricingRules() {
+    const result = await api<PricingRuleSummary[]>('/admin/pricing-rules');
+    setPricingRules(Array.isArray(result) ? result : []);
+  }
+
+  async function savePricingRule() {
+    const payload = JSON.parse(pricingRuleJson) as JsonRecord;
+    const result = await api<PricingRuleSummary>('/admin/pricing-rules', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    setPricingRules((current) => upsertByCode(current, result));
+  }
+
+  async function loadServiceZones() {
+    const result = await api<ServiceZoneSummary[]>('/admin/service-zones');
+    setServiceZones(Array.isArray(result) ? result : []);
+  }
+
+  async function saveServiceZone() {
+    const payload = JSON.parse(serviceZoneJson) as JsonRecord;
+    const result = await api<ServiceZoneSummary>('/admin/service-zones', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    setServiceZones((current) => upsertByCode(current, result));
   }
 
   async function assign(reassign = false) {
@@ -483,6 +557,42 @@ export default function AdminOperationsPage() {
       <section style={styles.operatingGrid}>
         <div style={styles.panel}>
           <div style={styles.panelHeader}>
+            <h2 style={styles.sectionTitle}>Pricing Rules</h2>
+            <button disabled={busy || !adminUserId} onClick={() => runStep('Load pricing rules', loadPricingRules)} style={styles.button}>
+              Load
+            </button>
+          </div>
+          <label style={styles.label}>
+            Pricing Rule JSON
+            <textarea value={pricingRuleJson} onChange={(event) => setPricingRuleJson(event.target.value)} style={styles.codeTextarea} />
+          </label>
+          <button disabled={busy || !adminUserId} onClick={() => runStep('Save pricing rule', savePricingRule)} style={styles.button}>
+            Save Pricing Rule
+          </button>
+          <DataList items={pricingRules} empty="No pricing rules loaded." />
+        </div>
+
+        <div style={styles.panel}>
+          <div style={styles.panelHeader}>
+            <h2 style={styles.sectionTitle}>Service Zones</h2>
+            <button disabled={busy || !adminUserId} onClick={() => runStep('Load service zones', loadServiceZones)} style={styles.button}>
+              Load
+            </button>
+          </div>
+          <label style={styles.label}>
+            Service Zone JSON
+            <textarea value={serviceZoneJson} onChange={(event) => setServiceZoneJson(event.target.value)} style={styles.codeTextarea} />
+          </label>
+          <button disabled={busy || !adminUserId} onClick={() => runStep('Save service zone', saveServiceZone)} style={styles.button}>
+            Save Service Zone
+          </button>
+          <DataList items={serviceZones} empty="No service zones loaded." />
+        </div>
+      </section>
+
+      <section style={styles.operatingGrid}>
+        <div style={styles.panel}>
+          <div style={styles.panelHeader}>
             <h2 style={styles.sectionTitle}>Support Tickets</h2>
             <button disabled={busy || !adminUserId} onClick={() => runStep('Load support tickets', loadSupportTickets)} style={styles.button}>
               Load
@@ -649,6 +759,12 @@ function getErrorMessage(body: unknown) {
   return String(record.error?.message ?? record.message ?? 'Request failed');
 }
 
+function upsertByCode<T extends { code?: string }>(items: T[], item: T) {
+  if (!item.code) return [item, ...items];
+  const next = items.filter((current) => current.code !== item.code);
+  return [item, ...next];
+}
+
 function badgeTone(status: string): CSSProperties {
   if (['DELIVERED', 'PAID', 'APPROVED', 'RESOLVED', 'SUCCEEDED'].includes(status)) return styles.badgeGood;
   if (['CANCELLED', 'FAILED', 'REJECTED', 'SUSPENDED', 'CLOSED'].includes(status)) return styles.badgeBad;
@@ -795,6 +911,18 @@ const styles: Record<string, CSSProperties> = {
     color: '#172033',
     font: 'inherit',
     minHeight: 72,
+    padding: '10px 12px',
+    resize: 'vertical',
+  },
+  codeTextarea: {
+    background: '#ffffff',
+    border: '1px solid #b8c4d6',
+    borderRadius: 6,
+    color: '#172033',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: 12,
+    lineHeight: 1.5,
+    minHeight: 220,
     padding: '10px 12px',
     resize: 'vertical',
   },

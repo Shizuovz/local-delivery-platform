@@ -1,6 +1,6 @@
 # Project Context
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 ## What This Project Is
 
@@ -85,6 +85,9 @@ Completed:
 - Worker job logs for dispatch start, completion, failure, and worker errors.
 - Health and metrics endpoints for Postgres, Redis/cache, object storage, and dispatch queues.
 - Runbook trigger keys for degraded dependencies, queue failures, and queue backlog.
+- Admin-managed pricing rules backed by PostgreSQL/in-memory storage.
+- Admin-managed service zones with active-zone serviceability validation.
+- Quote creation uses configured pricing and immutable pricing snapshots.
 
 ## Verified Workflows
 
@@ -184,7 +187,7 @@ Not yet implemented:
 - Real payment provider refund API calls.
 - Final storage provider selection, bucket policy, and CORS configuration.
 - Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly.
-- Full pricing/service-zone admin configuration.
+- Advanced pricing policy support such as peak surcharges, package limits, and business-specific rate cards.
 - Full admin reports and payment/refund monitoring screens.
 - Business delivery reports/export.
 - External alert delivery integration such as Sentry/Datadog/PagerDuty.
@@ -212,24 +215,6 @@ Pre-build decisions still need final policy choices:
 
 ## Recommended Next Step
 
-Current build slice: caching strategy plus operational reporting foundation.
+Current build slice: pricing and service-zone admin configuration.
 
-Recommended scope:
-
-Completed in this slice:
-
-1. Create `docs/policies/cache-policy.md`.
-2. Implement safe Redis cache helpers.
-3. Add `GET /api/v1/admin/reports/operations`.
-4. Add initial admin metrics:
-   - active deliveries
-   - searching rider
-   - assigned
-   - delivered today
-   - cancelled today
-   - refund pending
-   - open support tickets
-   - stale dispatch/admin attention
-5. Wire those metrics into the admin dashboard.
-
-Current recommended slice after observability hardening: final pricing/service-zone admin configuration or real payment provider integration depending on launch-risk priority.
+Current recommended slice after pricing/zones: real payment provider integration, starting with provider order creation, signature verification, webhook reconciliation, and refund-provider adapter.

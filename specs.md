@@ -1,6 +1,6 @@
 # Project Specs
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 This file describes the current practical build contract for the local delivery platform. It should stay aligned with `architecture-essentials.md`, `architecture.md`, `system-design.md`, `PRD.md`, and `docs/api/README.md`.
 
@@ -123,6 +123,14 @@ Admin:
 - `PATCH /admin/support/tickets/:id`
 - `GET /admin/audit-logs`
 - `GET /admin/reports/operations`
+- `GET /admin/pricing-rules`
+- `POST /admin/pricing-rules`
+- `GET /admin/service-zones`
+- `POST /admin/service-zones`
+
+Public config:
+
+- `GET /service-zones`
 
 Proof file access:
 
@@ -199,6 +207,9 @@ Required data rules:
 - One accepted assignment per delivery is enforced in the database.
 - Proof responses expose sanitized metadata, not raw private file references.
 - Proof file reads use short-lived signed URLs.
+- New quotes use active admin-managed pricing rules.
+- Pickup and drop coordinates must fall inside an active admin-managed service zone.
+- Pricing and service-zone admin edits require a reason and create audit logs.
 
 Important tables:
 
@@ -379,9 +390,21 @@ Current observability foundation includes:
 - queue counts for waiting, active, delayed, failed, and completed jobs
 - runbook trigger keys for degraded dependencies, queue failures, and queue backlog
 
+Current pricing and service-zone foundation includes:
+
+- `pricing_rules` table seeded with default `SEND`, `LIMITED_FETCH`, and `BUSINESS_DELIVERY` rules
+- `service_zones` table seeded with `BLR-CENTRAL`
+- admin pricing rule list/upsert endpoints
+- admin service-zone list/upsert endpoints
+- public active service-zone listing
+- configured pricing used for new quote snapshots
+- historical quote immutability tests after pricing edits
+- out-of-zone quote rejection tests
+- minimal admin dashboard controls for pricing and zone JSON updates
+
 Next spec gap:
 
-- final storage provider, bucket policy, and CORS configuration
-- optional server-side file proxy/streaming for clients that cannot consume provider URLs directly
-- final proof/document retention periods
+- real payment provider integration and refund-provider calls
+- advanced pricing policy support such as peak surcharges, package limits, and business-specific rate cards
+- final storage bucket policy and CORS configuration
 - external alert delivery integration such as Sentry/Datadog/PagerDuty

@@ -1,6 +1,6 @@
 # Project Decisions
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 This file records important product and engineering decisions for the local delivery platform. It does not replace `architecture-essentials.md`, `architecture.md`, `system-design.md`, or `PRD.md`; it summarizes the decisions that should guide day-to-day build work.
 
@@ -106,6 +106,19 @@ Implication:
 - Workers must reload current state from PostgreSQL before acting.
 - Cache entries must have explicit TTL and invalidation rules.
 
+### Pricing And Zones Are Admin-Managed
+
+Decision: Pricing rules and service zones are stored in backend configuration and managed by admins, not hardcoded in delivery services.
+
+Reason: Quotes must reflect operational policy, serviceability, and launch economics without requiring developer changes.
+
+Implication:
+
+- New quotes load active pricing rules from PostgreSQL/in-memory config.
+- Zone-specific pricing wins over default delivery-type pricing.
+- Historical quote snapshots remain unchanged after config edits.
+- Service-zone and pricing changes require an admin reason and audit log.
+
 ## Confirmed Data Decisions
 
 ### UUID Public IDs
@@ -209,16 +222,6 @@ These are not frozen yet and should be decided before production launch:
 
 ## Next Decision To Make
 
-Current decision area: cache policy.
+Current decision area: real payment provider integration.
 
-Cache policy has been drafted in `docs/policies/cache-policy.md`. It defines:
-
-- what can be cached
-- what must not be cached
-- TTLs by data type
-- invalidation triggers
-- Redis failure behavior
-- whether cached admin metrics may be slightly stale
-- PII restrictions in cache keys and values
-
-Next decision area: real object storage provider and upload flow.
+Provider-backed S3 storage and admin-managed pricing/service-zone configuration are now covered by the implementation plan. The next launch-risk decision is the payment provider contract, including order creation, signature verification, webhook reconciliation, refund API calls, and provider-specific failure handling.

@@ -16,6 +16,8 @@ import { InMemoryStore } from '../../common/in-memory-store';
 import { PrismaService } from '../../common/prisma.service';
 import { DispatchQueueService } from '../dispatch/dispatch.queue';
 import { DispatchService } from '../dispatch/dispatch.service';
+import { PricingService } from '../pricing/pricing.service';
+import { ServiceZonesService } from '../service-zones/service-zones.service';
 import { CreateBusinessDeliveryDto } from './businesses.dto';
 
 interface BusinessDeliveryResult {
@@ -34,6 +36,8 @@ export class BusinessesService {
     private readonly prisma: PrismaService,
     private readonly dispatchService: DispatchService,
     private readonly dispatchQueue: DispatchQueueService,
+    private readonly pricingService: PricingService,
+    private readonly serviceZonesService: ServiceZonesService,
   ) {}
 
   profile(actor: User) {
@@ -155,8 +159,14 @@ export class BusinessesService {
     dropAddressId: string,
     input: CreateBusinessDeliveryDto,
   ): DeliveryQuote {
+    const zone = this.serviceZonesService.zoneForPairFromMemory(input.pickupAddress, input.dropAddress);
     const distanceMeters = Math.max(1000, this.distanceMeters(input.pickupAddress.lat, input.pickupAddress.lng, input.dropAddress.lat, input.dropAddress.lng));
-    const pricing = this.price(input.item.packageClass, distanceMeters);
+    const pricing = this.pricingService.calculateFromMemory({
+      deliveryType: DeliveryType.BUSINESS_DELIVERY,
+      packageClass: input.item.packageClass,
+      distanceMeters,
+      zoneCode: zone.code,
+    });
     const quote: DeliveryQuote = {
       id: this.store.createId('quote'),
       type: DeliveryType.BUSINESS_DELIVERY,
@@ -165,8 +175,9 @@ export class BusinessesService {
       dropAddressId,
       distanceMeters,
       amountMinor: pricing.amountMinor,
-      currency: 'INR',
+      currency: pricing.currency,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      metadata: { pricingRuleCode: pricing.pricingRuleCode, zoneCode: pricing.zoneCode },
       pricing,
     };
     this.store.quotes.set(quote.id, quote);
@@ -195,8 +206,14 @@ export class BusinessesService {
       };
     }
 
+    const zone = await this.serviceZonesService.zoneForPair(input.pickupAddress, input.dropAddress);
     const distanceMeters = Math.max(1000, this.distanceMeters(input.pickupAddress.lat, input.pickupAddress.lng, input.dropAddress.lat, input.dropAddress.lng));
-    const pricing = this.price(input.item.packageClass, distanceMeters);
+    const pricing = await this.pricingService.calculate({
+      deliveryType: DeliveryType.BUSINESS_DELIVERY,
+      packageClass: input.item.packageClass,
+      distanceMeters,
+      zoneCode: zone.code,
+    });
 
     const result = await this.prisma.$transaction(async (tx) => {
       const pickup = await tx.address.create({ data: input.pickupAddress });
@@ -217,6 +234,7 @@ export class BusinessesService {
           platformFeeMinor: pricing.platformFeeMinor,
           taxMinor: pricing.taxMinor,
           discountMinor: pricing.discountMinor,
+          metadata: { pricingRuleCode: pricing.pricingRuleCode, zoneCode: pricing.zoneCode },
           expiresAt: new Date(Date.now() + 10 * 60 * 1000),
           confirmedAt: new Date(),
         },
@@ -417,26 +435,6 @@ export class BusinessesService {
     return `${businessId}:business_delivery:create:${key}`;
   }
 
-  private price(packageClass: 'SMALL' | 'MEDIUM' | 'LARGE', distanceMeters: number) {
-    const baseFeeMinor = 3000;
-    const distanceFeeMinor = Math.ceil(distanceMeters / 1000) * 1000;
-    const packageFeeMinor = packageClass === 'LARGE' ? 5000 : packageClass === 'MEDIUM' ? 2000 : 0;
-    const zoneSurchargeMinor = 0;
-    const platformFeeMinor = 500;
-    const taxMinor = 0;
-    const discountMinor = 0;
-    return {
-      baseFeeMinor,
-      distanceFeeMinor,
-      packageFeeMinor,
-      zoneSurchargeMinor,
-      platformFeeMinor,
-      taxMinor,
-      discountMinor,
-      amountMinor: baseFeeMinor + distanceFeeMinor + packageFeeMinor + zoneSurchargeMinor + platformFeeMinor + taxMinor - discountMinor,
-    };
-  }
-
   private distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number) {
     const kmPerDegree = 111;
     const x = (lng2 - lng1) * Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
@@ -504,6 +502,7 @@ export class BusinessesService {
     platformFeeMinor: number;
     taxMinor: number;
     discountMinor: number;
+    metadata?: unknown;
   }): DeliveryQuote {
     return {
       id: quote.id,
@@ -516,6 +515,7 @@ export class BusinessesService {
       amountMinor: quote.amountMinor,
       currency: quote.currency,
       expiresAt: quote.expiresAt.toISOString(),
+      metadata: this.jsonObject(quote.metadata),
       pricing: {
         baseFeeMinor: quote.baseFeeMinor,
         distanceFeeMinor: quote.distanceFeeMinor,
@@ -526,6 +526,12 @@ export class BusinessesService {
         discountMinor: quote.discountMinor,
       },
     };
+  }
+
+  private jsonObject(value: unknown): Record<string, unknown> | undefined {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined;
   }
 
   private toPayment(payment: { id: string; deliveryId: string; provider: string; providerRef: string; amountMinor: number; currency: string; status: string }): Payment {

@@ -12,7 +12,9 @@ import { BusinessesService } from './modules/businesses/businesses.service';
 import { AdminService } from './modules/admin/admin.service';
 import { PaymentsService } from './modules/payments/payments.service';
 import { ProofsService } from './modules/proofs/proofs.service';
+import { PricingService } from './modules/pricing/pricing.service';
 import { RidersService } from './modules/riders/riders.service';
+import { ServiceZonesService } from './modules/service-zones/service-zones.service';
 import { AssignmentStatus, DeliveryStatus, DeliveryType, PaymentStatus, RefundStatus, RiderAvailabilityStatus } from '@local-delivery/types';
 
 const runInMemory = process.env.PERSISTENCE_MODE === 'prisma' ? describe.skip : describe;
@@ -23,10 +25,12 @@ function setup() {
   const dispatchQueue = new DispatchQueueService();
   const dispatch = new DispatchService(store, prisma);
   const storage = new ObjectStorageService();
-  const deliveries = new DeliveriesService(store, dispatch, prisma);
+  const pricing = new PricingService(store, prisma);
+  const serviceZones = new ServiceZonesService(store, prisma);
+  const deliveries = new DeliveriesService(store, dispatch, prisma, pricing, serviceZones);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
   const proofsService = new ProofsService(store, prisma, deliveries, storage);
-  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
+  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue, pricing, serviceZones);
   const cache = noCache();
   const adminService = new AdminService(store, dispatch, prisma, deliveries, cache, storage);
   const riders = new RidersService(store, deliveries, dispatch, prisma, storage);
@@ -36,7 +40,7 @@ function setup() {
   const admin = [...store.users.values()].find((user) => user.roles.includes('OPS_ADMIN'))!;
   const businessUser = [...store.users.values()].find((user) => user.roles.includes('BUSINESS'))!;
   const business = [...store.businesses.values()][0];
-  return { store, dispatch, deliveries, payments, proofsService, businesses, adminService, riders, privateFileRetention, customer, rider, admin, businessUser, business };
+  return { store, dispatch, deliveries, payments, proofsService, businesses, adminService, riders, pricing, serviceZones, privateFileRetention, customer, rider, admin, businessUser, business };
 }
 
 function noCache(): CacheService {
@@ -340,6 +344,46 @@ runInMemory('functional SEND spine', () => {
     expect(report.paymentCounts.paid).toBeGreaterThanOrEqual(1);
     expect(report.supportCounts.open).toBeGreaterThanOrEqual(1);
     expect(report.dispatchCounts.adminAttention).toBeGreaterThanOrEqual(1);
+  });
+
+  it('uses admin pricing configuration for new quotes without mutating historical quotes', () => {
+    const { store, deliveries, pricing, customer, admin } = setup();
+    const before = deliveries.createQuote(customer, quoteInput);
+
+    pricing.upsert(admin, {
+      code: 'BLR-CENTRAL-SEND-TEST',
+      deliveryType: DeliveryType.SEND,
+      zoneCode: 'BLR-CENTRAL',
+      active: true,
+      currency: 'INR',
+      baseFeeMinor: before.amountMinor + 1000,
+      perKmFeeMinor: 0,
+      mediumPackageFeeMinor: 0,
+      largePackageFeeMinor: 0,
+      zoneSurchargeMinor: 0,
+      platformFeeMinor: 0,
+      taxBps: 0,
+      discountMinor: 0,
+      reason: 'test zone-specific pricing rule',
+    });
+    const after = deliveries.createQuote(customer, {
+      ...quoteInput,
+      item: { ...quoteInput.item, description: 'Documents after pricing update' },
+    });
+
+    expect(after.amountMinor).toBe(before.amountMinor + 1000);
+    expect(store.quotes.get(before.id)?.amountMinor).toBe(before.amountMinor);
+    expect(after.metadata).toEqual(expect.objectContaining({ pricingRuleCode: 'BLR-CENTRAL-SEND-TEST', zoneCode: 'BLR-CENTRAL' }));
+  });
+
+  it('rejects quotes outside active admin-managed service zones', () => {
+    const { deliveries, customer } = setup();
+
+    expect(() => deliveries.createQuote(customer, {
+      ...quoteInput,
+      pickupAddress: { ...quoteInput.pickupAddress, lat: 28.6139, lng: 77.209 },
+      dropAddress: { ...quoteInput.dropAddress, lat: 28.5355, lng: 77.391 },
+    })).toThrow('Pickup and drop must be inside an active service zone');
   });
 
   it('lets admin suspend a rider and cancel their open offers', () => {

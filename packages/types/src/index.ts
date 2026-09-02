@@ -15,6 +15,7 @@ export * from './models/delivery-quote';
 export * from './models/notification';
 export * from './models/payment';
 export * from './models/private-file';
+export * from './models/pricing-rule';
 export * from './models/proof';
 export * from './models/refund';
 export * from './models/report';

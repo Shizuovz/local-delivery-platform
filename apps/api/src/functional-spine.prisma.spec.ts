@@ -14,8 +14,10 @@ import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
 import { PaymentsService } from './modules/payments/payments.service';
 import { ProofsService } from './modules/proofs/proofs.service';
+import { PricingService } from './modules/pricing/pricing.service';
 import { RidersService } from './modules/riders/riders.service';
-import { AssignmentStatus, DeliveryStatus, PaymentStatus, RefundStatus, RiderAvailabilityStatus } from '@local-delivery/types';
+import { ServiceZonesService } from './modules/service-zones/service-zones.service';
+import { AssignmentStatus, DeliveryStatus, DeliveryType, PaymentStatus, RefundStatus, RiderAvailabilityStatus } from '@local-delivery/types';
 
 const runPrisma = process.env.PERSISTENCE_MODE === 'prisma' ? describe : describe.skip;
 
@@ -46,10 +48,12 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const dispatchQueue = new DispatchQueueService();
   const dispatch = new DispatchService(store, prisma);
   const storage = new ObjectStorageService();
-  const deliveries = new DeliveriesService(store, dispatch, prisma);
+  const pricing = new PricingService(store, prisma);
+  const serviceZones = new ServiceZonesService(store, prisma);
+  const deliveries = new DeliveriesService(store, dispatch, prisma, pricing, serviceZones);
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
   const proofsService = new ProofsService(store, prisma, deliveries, storage);
-  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue);
+  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue, pricing, serviceZones);
   const riders = new RidersService(store, deliveries, dispatch, prisma, storage);
   const actors = new ActorService(store, prisma);
   const auth = new AuthService(store, prisma);
@@ -201,6 +205,53 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     expect(report.paymentCounts.paid).toBeGreaterThanOrEqual(1);
     expect(report.supportCounts.open).toBeGreaterThanOrEqual(1);
     expect(report.dispatchCounts.adminAttention).toBeGreaterThanOrEqual(1);
+  });
+
+  it('uses admin pricing configuration for new quotes without mutating historical quotes', async () => {
+    const customer = await createCustomer();
+    const admin = await adminActor();
+    const before = await deliveries.createQuote(customer, quoteInput);
+    const ruleCode = `BLR-CENTRAL-SEND-E2E-${Date.now()}`;
+
+    try {
+      await pricing.upsert(admin, {
+        code: ruleCode,
+        deliveryType: DeliveryType.SEND,
+        zoneCode: 'BLR-CENTRAL',
+        active: true,
+        currency: 'INR',
+        baseFeeMinor: before.amountMinor + 1000,
+        perKmFeeMinor: 0,
+        mediumPackageFeeMinor: 0,
+        largePackageFeeMinor: 0,
+        zoneSurchargeMinor: 0,
+        platformFeeMinor: 0,
+        taxBps: 0,
+        discountMinor: 0,
+        reason: 'test zone-specific pricing rule',
+      });
+      const after = await deliveries.createQuote(customer, {
+        ...quoteInput,
+        item: { ...quoteInput.item, description: 'Documents after pricing update' },
+      });
+      const persistedBefore = await prisma.deliveryQuote.findUniqueOrThrow({ where: { id: before.id } });
+
+      expect(after.amountMinor).toBe(before.amountMinor + 1000);
+      expect(persistedBefore.amountMinor).toBe(before.amountMinor);
+      expect(after.metadata).toEqual(expect.objectContaining({ pricingRuleCode: ruleCode, zoneCode: 'BLR-CENTRAL' }));
+    } finally {
+      await prisma.pricingRule.updateMany({ where: { code: ruleCode }, data: { active: false } });
+    }
+  });
+
+  it('rejects quotes outside active admin-managed service zones', async () => {
+    const customer = await createCustomer();
+
+    await expect(deliveries.createQuote(customer, {
+      ...quoteInput,
+      pickupAddress: { ...quoteInput.pickupAddress, lat: 28.6139, lng: 77.209 },
+      dropAddress: { ...quoteInput.dropAddress, lat: 28.5355, lng: 77.391 },
+    })).rejects.toThrow('Pickup and drop must be inside an active service zone');
   });
 
   it('lets admin suspend a rider and cancel their open offers', async () => {

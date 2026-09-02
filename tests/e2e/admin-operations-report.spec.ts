@@ -63,3 +63,50 @@ test('admin can review a rider document through signed access', async ({ page })
   await expect(page.locator('pre').last()).toContainText('fileRef');
   await expect(page.locator('pre').last()).toContainText(`private/rider-documents/${rider.id}/playwright-license.pdf`);
 });
+
+test('admin can manage pricing rules and service zones', async ({ page }) => {
+  const admin = await prisma.user.findUniqueOrThrow({
+    where: { phone: '+910000000001' },
+  });
+  const suffix = Date.now();
+  const pricingCode = `PW-SEND-${suffix}`;
+  const zoneCode = `PW-ZONE-${suffix}`;
+
+  await page.goto('/');
+  await page.getByLabel('Admin User ID').fill(admin.id);
+
+  await page.getByLabel('Pricing Rule JSON').fill(JSON.stringify({
+    code: pricingCode,
+    deliveryType: 'SEND',
+    active: false,
+    currency: 'INR',
+    baseFeeMinor: 4100,
+    perKmFeeMinor: 900,
+    mediumPackageFeeMinor: 1500,
+    largePackageFeeMinor: 3200,
+    zoneSurchargeMinor: 0,
+    platformFeeMinor: 400,
+    taxBps: 0,
+    discountMinor: 0,
+    reason: 'Playwright admin pricing check',
+  }, null, 2));
+  await page.getByRole('button', { name: 'Save Pricing Rule' }).click();
+
+  await expect(page.getByText('Save pricing rule complete')).toBeVisible();
+  await expect(page.getByText(pricingCode).first()).toBeVisible();
+
+  await page.getByLabel('Service Zone JSON').fill(JSON.stringify({
+    code: zoneCode,
+    name: 'Playwright Zone',
+    city: 'Bengaluru',
+    active: false,
+    centerLat: 12.9716,
+    centerLng: 77.5946,
+    radiusKm: 1,
+    reason: 'Playwright admin zone check',
+  }, null, 2));
+  await page.getByRole('button', { name: 'Save Service Zone' }).click();
+
+  await expect(page.getByText('Save service zone complete')).toBeVisible();
+  await expect(page.getByText(zoneCode).first()).toBeVisible();
+});

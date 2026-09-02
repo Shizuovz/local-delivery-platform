@@ -11,6 +11,7 @@ export interface DeliveryQuote {
   amountMinor: number;
   currency: string;
   expiresAt: string;
+  metadata?: Record<string, unknown>;
   pricing: {
     baseFeeMinor: number;
     distanceFeeMinor: number;
