@@ -119,6 +119,17 @@ export class ObjectStorageService {
     return Boolean(value?.startsWith('private/proofs/') || value?.startsWith('private/rider-documents/'));
   }
 
+  health() {
+    const provider = this.provider();
+    const s3Mode = provider === 's3' || provider === 's3-compatible';
+    return {
+      provider,
+      bucket: this.bucket(),
+      configured: s3Mode ? Boolean(this.s3Client) : true,
+      mode: s3Mode ? 'provider-presigned' : 'mock-presigned',
+    };
+  }
+
   privateObjectKey(scope: PrivateObjectScope, ownerId: string, fileName: string) {
     const safeName = fileName
       .toLowerCase()

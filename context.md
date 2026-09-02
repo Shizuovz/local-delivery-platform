@@ -81,6 +81,10 @@ Completed:
 - Minimal customer UI signed proof read workflow wiring.
 - Minimal admin UI rider document/proof signed read workflow wiring.
 - Provider-backed S3-compatible pre-signed upload/read URLs behind the existing storage contract.
+- Structured API request logs with request IDs and latency.
+- Worker job logs for dispatch start, completion, failure, and worker errors.
+- Health and metrics endpoints for Postgres, Redis/cache, object storage, and dispatch queues.
+- Runbook trigger keys for degraded dependencies, queue failures, and queue backlog.
 
 ## Verified Workflows
 
@@ -109,6 +113,9 @@ npm run test:e2e -- --project=admin-chrome
 Latest pushed commits:
 
 ```text
+0e89683 Add provider-backed S3 presigned storage
+6765a60 Wire storage flows into minimal UIs
+08e1267 Update project context after storage hardening
 8aec8ec Harden private file storage flows
 18c7b78 Add Playwright admin operations smoke test
 f7e91ff Add cached admin operations report
@@ -180,7 +187,7 @@ Not yet implemented:
 - Full pricing/service-zone admin configuration.
 - Full admin reports and payment/refund monitoring screens.
 - Business delivery reports/export.
-- Production observability: metrics, alerts, dashboards, and runbook triggers.
+- External alert delivery integration such as Sentry/Datadog/PagerDuty.
 - Production readiness checklist.
 
 Pre-build decisions still need final policy choices:
@@ -225,4 +232,4 @@ Completed in this slice:
    - stale dispatch/admin attention
 5. Wire those metrics into the admin dashboard.
 
-Current recommended slice after provider-backed storage verification: production observability hardening or final pricing/service-zone admin configuration depending on launch-risk priority.
+Current recommended slice after observability hardening: final pricing/service-zone admin configuration or real payment provider integration depending on launch-risk priority.

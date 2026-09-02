@@ -4,8 +4,10 @@ import { z } from 'zod';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiExceptionFilter } from './common/api-exception.filter';
 import { ConflictError } from './common/domain-errors';
+import { ObservabilityService } from './common/observability.service';
 import { ObjectStorageService } from './common/object-storage.service';
 import { RateLimitService } from './common/rate-limit.service';
+import { StructuredRequestLoggerMiddleware } from './common/structured-request-logger.middleware';
 import {
   DISPATCH_DELIVERY_QUEUE,
   DISPATCH_OFFER_TIMEOUT_QUEUE,
@@ -143,6 +145,67 @@ describe('API runtime hardening', () => {
       process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = previous.secretAccessKey;
       process.env.OBJECT_STORAGE_REGION = previous.region;
     }
+  });
+
+  it('reports observability health and runbook triggers for degraded dependencies', async () => {
+    const observability = new ObservabilityService(
+      { isHealthy: async () => ({ mode: 'prisma', connected: false }) } as never,
+      { health: async () => ({ mode: 'redis', connected: false }) } as never,
+      { health: () => ({ provider: 's3-compatible', bucket: 'private', configured: false, mode: 'provider-presigned' }) } as never,
+      {
+        isEnabled: () => true,
+        isHealthy: async () => ({ enabled: true, connected: false }),
+        metrics: async () => ({
+          enabled: true,
+          queues: [{ name: 'dispatch.delivery', waiting: 2, active: 0, delayed: 0, failed: 1, completed: 0 }],
+        }),
+      } as never,
+    );
+
+    const health = await observability.health();
+    const metrics = await observability.metrics();
+
+    expect(health.ok).toBe(false);
+    expect(health.runbookTriggers.map((trigger) => trigger.key)).toEqual(expect.arrayContaining([
+      'postgres.unreachable',
+      'redis.queue.degraded',
+      'storage.degraded',
+      'queue.dispatch.delivery.failed',
+    ]));
+    expect(metrics.queues.queues[0]).toEqual(expect.objectContaining({ failed: 1 }));
+  });
+
+  it('writes structured request logs with request id and latency', () => {
+    const logger = new StructuredRequestLoggerMiddleware();
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    let finish: (() => void) | undefined;
+    const response = {
+      statusCode: 200,
+      setHeader: vi.fn(),
+      on: vi.fn((_event: 'finish', listener: () => void) => {
+        finish = listener;
+      }),
+    };
+
+    logger.use({
+      method: 'GET',
+      originalUrl: '/api/v1/health',
+      headers: { 'x-request-id': 'req-observe-1', 'user-agent': 'vitest' },
+    }, response, vi.fn());
+    finish?.();
+
+    const logged = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+    expect(response.setHeader).toHaveBeenCalledWith('x-request-id', 'req-observe-1');
+    expect(logged).toEqual(expect.objectContaining({
+      service: 'local-delivery-api',
+      event: 'http.request',
+      requestId: 'req-observe-1',
+      method: 'GET',
+      path: '/api/v1/health',
+      statusCode: 200,
+    }));
+    expect(typeof logged.durationMs).toBe('number');
+    consoleSpy.mockRestore();
   });
 });
 

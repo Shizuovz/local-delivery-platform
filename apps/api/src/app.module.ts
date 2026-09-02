@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { CoreModule } from './common/core.module';
+import { StructuredRequestLoggerMiddleware } from './common/structured-request-logger.middleware';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BusinessesModule } from './modules/businesses/businesses.module';
@@ -13,4 +14,8 @@ import { HealthModule } from './modules/health/health.module';
 @Module({
   imports: [CoreModule, HealthModule, AuthModule, DeliveriesModule, DispatchModule, PaymentsModule, ProofsModule, RidersModule, BusinessesModule, AdminModule],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(StructuredRequestLoggerMiddleware).forRoutes('*');
+  }
+}

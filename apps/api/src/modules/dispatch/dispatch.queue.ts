@@ -60,6 +60,31 @@ export class DispatchQueueService implements OnModuleDestroy {
     return this.toQueuedResult(job);
   }
 
+  async metrics() {
+    if (!this.isEnabled()) {
+      return {
+        enabled: false,
+        queues: [],
+      };
+    }
+
+    const queues = await Promise.all([
+      this.queueMetrics(this.getDeliveryQueue()),
+      this.queueMetrics(this.getOfferTimeoutQueue()),
+    ]);
+    return { enabled: true, queues };
+  }
+
+  async isHealthy() {
+    if (!this.isEnabled()) return { enabled: false, connected: false };
+    try {
+      await this.metrics();
+      return { enabled: true, connected: true };
+    } catch {
+      return { enabled: true, connected: false };
+    }
+  }
+
   async onModuleDestroy() {
     await this.deliveryQueue?.close();
     await this.offerTimeoutQueue?.close();
@@ -90,6 +115,18 @@ export class DispatchQueueService implements OnModuleDestroy {
       queued: true,
       queueName: job.queueName,
       jobId: job.id,
+    };
+  }
+
+  private async queueMetrics(queue: Queue) {
+    const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed');
+    return {
+      name: queue.name,
+      waiting: counts.waiting ?? 0,
+      active: counts.active ?? 0,
+      delayed: counts.delayed ?? 0,
+      failed: counts.failed ?? 0,
+      completed: counts.completed ?? 0,
     };
   }
 }

@@ -20,6 +20,8 @@ Public endpoints:
 - `GET /proofs/:id/file`
 - `PUT /storage/mock-upload`
 - `GET /health`
+- `GET /health/ready`
+- `GET /health/metrics`
 
 Protected endpoints require:
 
@@ -41,6 +43,18 @@ All runtime errors should return:
   "timestamp": "2026-08-27T00:00:00.000Z"
 }
 ```
+
+## Health And Observability
+
+```http
+GET /health
+GET /health/ready
+GET /health/metrics
+```
+
+Health responses include dependency status for PostgreSQL, Redis/cache, object storage, and dispatch queues. Metrics responses include queue counts and runbook trigger keys such as `postgres.unreachable`, `redis.queue.degraded`, `storage.degraded`, queue failures, and queue backlog.
+
+API requests emit structured JSON logs with request ID, method, path, status code, and latency. Worker jobs emit structured JSON logs for start, completion, failure, and worker errors.
 
 ## Customer SEND Endpoints
 
@@ -364,6 +378,9 @@ Implemented for the functional spine:
 - Signed proof upload URL endpoint
 - Signed rider document URLs for rider/admin views
 - Proof and rider document retention cleanup service/job
+- Structured API request logs with request IDs and latency
+- Health and metrics endpoints for Postgres, Redis/cache, storage, and dispatch queues
+- Queue failure/backlog visibility with runbook trigger keys
 
 Not yet implemented:
 
@@ -373,3 +390,4 @@ Not yet implemented:
 - Full admin report exports and payment/refund monitoring screens
 - Final storage provider selection and bucket/CORS policy
 - Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly
+- External alert delivery integration such as Sentry/Datadog/PagerDuty

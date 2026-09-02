@@ -45,6 +45,22 @@ export class CacheService implements OnModuleDestroy {
     }
   }
 
+  async health() {
+    if (process.env.CACHE_MODE === 'off') {
+      return { mode: 'off', connected: false };
+    }
+    const client = this.getClient();
+    if (!client) return { mode: 'redis', connected: false, degradedUntil: new Date(this.disabledUntil).toISOString() };
+
+    try {
+      await client.ping();
+      return { mode: 'redis', connected: true };
+    } catch {
+      this.markUnavailable();
+      return { mode: 'redis', connected: false, degradedUntil: new Date(this.disabledUntil).toISOString() };
+    }
+  }
+
   async onModuleDestroy() {
     if (this.client) {
       this.client.disconnect();

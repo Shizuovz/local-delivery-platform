@@ -20,6 +20,7 @@ async function bootstrap() {
   const deliveryWorker = new Worker<DispatchDeliveryJobData>(
     DISPATCH_DELIVERY_QUEUE,
     async (job) => {
+      logWorkerEvent('info', 'worker.job.start', job.queueName, job.id, job.data);
       const result = await dispatch.dispatchDelivery(job.data.deliveryId);
       if (result.offeredAssignment?.id) {
         await queues.enqueueOfferTimeout(result.offeredAssignment.id);
@@ -32,6 +33,7 @@ async function bootstrap() {
   const offerTimeoutWorker = new Worker<DispatchOfferTimeoutJobData>(
     DISPATCH_OFFER_TIMEOUT_QUEUE,
     async (job) => {
+      logWorkerEvent('info', 'worker.job.start', job.queueName, job.id, job.data);
       const result = await dispatch.expireOffer(job.data.assignmentId);
       if (
         result
@@ -47,6 +49,18 @@ async function bootstrap() {
     },
     { connection },
   );
+
+  for (const worker of [deliveryWorker, offerTimeoutWorker]) {
+    worker.on('completed', (job) => {
+      logWorkerEvent('info', 'worker.job.completed', job.queueName, job.id, job.data);
+    });
+    worker.on('failed', (job, error) => {
+      logWorkerEvent('error', 'worker.job.failed', job?.queueName, job?.id, job?.data, error);
+    });
+    worker.on('error', (error) => {
+      logWorkerEvent('error', 'worker.error', worker.name, undefined, undefined, error);
+    });
+  }
 
   process.on('SIGINT', async () => {
     await deliveryWorker.close();
@@ -64,3 +78,24 @@ async function bootstrap() {
 }
 
 void bootstrap();
+
+function logWorkerEvent(
+  level: 'info' | 'warn' | 'error',
+  event: string,
+  queueName?: string,
+  jobId?: string,
+  data?: { deliveryId?: string; assignmentId?: string },
+  error?: Error,
+) {
+  console.log(JSON.stringify({
+    service: 'local-delivery-worker',
+    timestamp: new Date().toISOString(),
+    level,
+    event,
+    queueName,
+    jobId,
+    deliveryId: data?.deliveryId,
+    assignmentId: data?.assignmentId,
+    error: error ? { name: error.name, message: error.message } : undefined,
+  }));
+}

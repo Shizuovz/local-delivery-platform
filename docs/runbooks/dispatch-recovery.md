@@ -57,3 +57,17 @@ Alert operations/engineering on:
 - Redis connectivity failure
 - Delivery stuck in `SEARCHING_RIDER`
 - Admin attention queue exceeding threshold
+
+Check queue visibility through:
+
+```http
+GET /api/v1/health/metrics
+```
+
+Relevant trigger keys:
+
+- `redis.queue.degraded`
+- `queue.dispatch.delivery.failed`
+- `queue.dispatch.delivery.backlog`
+- `queue.dispatch.offer-timeout.failed`
+- `queue.dispatch.offer-timeout.backlog`

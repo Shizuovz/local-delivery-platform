@@ -368,8 +368,20 @@ Current storage foundation includes:
 - admin web rider document/proof signed read controls wired to real API endpoints
 - provider-backed S3-compatible pre-signed upload/read URLs
 
+Current observability foundation includes:
+
+- structured API request logs with request IDs, path, status code, and latency
+- structured worker logs for dispatch job start/completion/failure/error
+- `GET /api/v1/health`
+- `GET /api/v1/health/ready`
+- `GET /api/v1/health/metrics`
+- dependency health for PostgreSQL, Redis/cache, object storage, and dispatch queues
+- queue counts for waiting, active, delayed, failed, and completed jobs
+- runbook trigger keys for degraded dependencies, queue failures, and queue backlog
+
 Next spec gap:
 
 - final storage provider, bucket policy, and CORS configuration
 - optional server-side file proxy/streaming for clients that cannot consume provider URLs directly
 - final proof/document retention periods
+- external alert delivery integration such as Sentry/Datadog/PagerDuty

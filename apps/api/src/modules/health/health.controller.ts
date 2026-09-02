@@ -1,18 +1,24 @@
 import { Controller, Get } from '@nestjs/common';
 import { Public } from '../../common/public.decorator';
-import { PrismaService } from '../../common/prisma.service';
+import { ObservabilityService } from '../../common/observability.service';
 
 @Controller('health')
 @Public()
 export class HealthController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly observability: ObservabilityService) {}
 
   @Get()
   async health() {
-    return {
-      ok: true,
-      persistence: await this.prisma.isHealthy(),
-      timestamp: new Date().toISOString(),
-    };
+    return this.observability.health();
+  }
+
+  @Get('ready')
+  async ready() {
+    return this.observability.health();
+  }
+
+  @Get('metrics')
+  async metrics() {
+    return this.observability.metrics();
   }
 }
