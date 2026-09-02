@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 
 export type PrivateObjectScope = 'proofs' | 'rider-documents';
@@ -21,15 +23,46 @@ export interface SignedUpload {
   headers: Record<string, string>;
 }
 
+export interface SignedRead {
+  storageProvider: string;
+  bucket: string;
+  objectKey: string;
+  readUrl: string;
+  method: 'GET';
+  expiresAt: string;
+}
+
 const DEFAULT_UPLOAD_TTL_SECONDS = 5 * 60;
 const DEFAULT_READ_TTL_MS = 10 * 60 * 1000;
 
 @Injectable()
 export class ObjectStorageService {
-  createSignedUpload(input: SignedUploadRequest): SignedUpload {
+  private readonly s3Client = this.createS3Client();
+
+  async createSignedUpload(input: SignedUploadRequest): Promise<SignedUpload> {
     const ttlSeconds = input.ttlSeconds ?? DEFAULT_UPLOAD_TTL_SECONDS;
     const expires = Date.now() + ttlSeconds * 1000;
     const objectKey = this.privateObjectKey(input.scope, input.ownerId, input.fileName);
+
+    if (this.s3Client) {
+      const command = new PutObjectCommand({
+        Bucket: this.bucket(),
+        Key: objectKey,
+        ContentType: input.contentType,
+      });
+      return {
+        storageProvider: this.provider(),
+        bucket: this.bucket(),
+        objectKey,
+        uploadUrl: await getSignedUrl(this.s3Client, command, { expiresIn: ttlSeconds }),
+        method: 'PUT',
+        expiresAt: new Date(expires).toISOString(),
+        headers: {
+          'content-type': input.contentType,
+        },
+      };
+    }
+
     const token = this.sign(`upload:${objectKey}:${input.contentType}:${expires}`);
 
     return {
@@ -50,6 +83,24 @@ export class ObjectStorageService {
     const expires = Date.now() + ttlMs;
     const token = this.signReadToken(path, id, expires);
     return `${path}?expires=${expires}&token=${token}`;
+  }
+
+  async createSignedRead(objectKey: string, ttlMs = DEFAULT_READ_TTL_MS): Promise<SignedRead | null> {
+    if (!this.s3Client) return null;
+    const expiresIn = Math.max(1, Math.floor(ttlMs / 1000));
+    const expires = Date.now() + expiresIn * 1000;
+    const command = new GetObjectCommand({
+      Bucket: this.bucket(),
+      Key: objectKey,
+    });
+    return {
+      storageProvider: this.provider(),
+      bucket: this.bucket(),
+      objectKey,
+      readUrl: await getSignedUrl(this.s3Client, command, { expiresIn }),
+      method: 'GET',
+      expiresAt: new Date(expires).toISOString(),
+    };
   }
 
   verifyReadUrl(path: string, id: string, expires: number, token: string | undefined) {
@@ -82,7 +133,27 @@ export class ObjectStorageService {
   }
 
   private bucket() {
-    return process.env.OBJECT_STORAGE_BUCKET ?? 'local-delivery-private';
+    return process.env.OBJECT_STORAGE_BUCKET ?? process.env.S3_BUCKET ?? 'local-delivery-private';
+  }
+
+  private createS3Client() {
+    const provider = this.provider();
+    const endpoint = process.env.OBJECT_STORAGE_ENDPOINT ?? process.env.S3_ENDPOINT;
+    const accessKeyId = process.env.OBJECT_STORAGE_ACCESS_KEY_ID ?? process.env.S3_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY ?? process.env.S3_SECRET_ACCESS_KEY;
+    const region = process.env.OBJECT_STORAGE_REGION ?? process.env.S3_REGION ?? 'us-east-1';
+    if (provider !== 's3' && provider !== 's3-compatible') return null;
+    if (!endpoint || !accessKeyId || !secretAccessKey || !this.bucket()) return null;
+
+    return new S3Client({
+      region,
+      endpoint,
+      forcePathStyle: process.env.OBJECT_STORAGE_FORCE_PATH_STYLE !== 'false',
+      credentials: {
+        accessKeyId,
+        secretAccessKey,
+      },
+    });
   }
 
   private signReadToken(path: string, id: string, expires: number) {

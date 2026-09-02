@@ -80,6 +80,7 @@ Completed:
 - Minimal rider UI proof upload/document upload workflow wiring.
 - Minimal customer UI signed proof read workflow wiring.
 - Minimal admin UI rider document/proof signed read workflow wiring.
+- Provider-backed S3-compatible pre-signed upload/read URLs behind the existing storage contract.
 
 ## Verified Workflows
 
@@ -174,7 +175,8 @@ Not yet implemented:
 
 - Real payment provider integration.
 - Real payment provider refund API calls.
-- Provider-backed S3 streaming remains to be added when storage provider is selected.
+- Final storage provider selection, bucket policy, and CORS configuration.
+- Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly.
 - Full pricing/service-zone admin configuration.
 - Full admin reports and payment/refund monitoring screens.
 - Business delivery reports/export.
@@ -223,4 +225,4 @@ Completed in this slice:
    - stale dispatch/admin attention
 5. Wire those metrics into the admin dashboard.
 
-Current recommended slice after storage UI verification: provider-backed S3 upload/download streaming, production observability hardening, or final pricing/service-zone admin configuration depending on launch-risk priority.
+Current recommended slice after provider-backed storage verification: production observability hardening or final pricing/service-zone admin configuration depending on launch-risk priority.

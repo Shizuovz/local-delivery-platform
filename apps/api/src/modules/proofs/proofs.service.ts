@@ -35,6 +35,8 @@ export class ProofsService {
     if (this.prisma.isEnabled()) {
       const proof = await this.prisma.proof.findUnique({ where: { id: proofId } });
       if (!proof || !proof.fileUrl) throw new NotFoundError('Proof file not found');
+      const signedRead = await this.storage.createSignedRead(proof.fileUrl, expiresAt - Date.now());
+      if (signedRead) return { proofId, type: proof.type, ...signedRead };
       return {
         proofId,
         type: proof.type,
@@ -46,6 +48,8 @@ export class ProofsService {
 
     const proof = this.store.proofs.get(proofId);
     if (!proof?.fileUrl) throw new NotFoundError('Proof file not found');
+    const signedRead = await this.storage.createSignedRead(proof.fileUrl, expiresAt - Date.now());
+    if (signedRead) return { proofId, type: proof.type, ...signedRead };
     return {
       proofId,
       type: proof.type,

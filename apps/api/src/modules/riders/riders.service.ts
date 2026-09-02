@@ -72,7 +72,7 @@ export class RidersService {
     }
 
     this.requireRider(actor);
-    const upload = this.storage.createSignedUpload({
+    const upload = await this.storage.createSignedUpload({
       scope: 'rider-documents',
       ownerId: actor.id,
       fileName: input.fileName,
@@ -106,6 +106,8 @@ export class RidersService {
     if (this.prisma.isEnabled()) {
       const document = await this.prisma.riderDocument.findUnique({ where: { id: documentId } });
       if (!document?.fileUrl) throw new NotFoundError('Rider document file not found');
+      const signedRead = await this.storage.createSignedRead(document.fileUrl, expiresAt - Date.now());
+      if (signedRead) return { documentId, type: document.type, ...signedRead };
       return {
         documentId,
         type: document.type,
@@ -117,6 +119,8 @@ export class RidersService {
 
     const document = this.store.riderDocuments.get(documentId);
     if (!document?.fileUrl) throw new NotFoundError('Rider document file not found');
+    const signedRead = await this.storage.createSignedRead(document.fileUrl, expiresAt - Date.now());
+    if (signedRead) return { documentId, type: document.type, ...signedRead };
     return {
       documentId,
       type: document.type,
@@ -392,7 +396,7 @@ export class RidersService {
     input: { type: string; fileName: string; contentType: string; expiresAt?: string },
   ): Promise<{ document: RiderDocument; upload: SignedUpload }> {
     await this.requireRiderWithPrisma(actor);
-    const upload = this.storage.createSignedUpload({
+    const upload = await this.storage.createSignedUpload({
       scope: 'rider-documents',
       ownerId: actor.id,
       fileName: input.fileName,

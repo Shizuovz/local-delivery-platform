@@ -366,8 +366,10 @@ Current storage foundation includes:
 - rider mobile proof/document upload controls wired to real API endpoints
 - customer mobile signed proof read control wired to real API endpoints
 - admin web rider document/proof signed read controls wired to real API endpoints
+- provider-backed S3-compatible pre-signed upload/read URLs
 
 Next spec gap:
 
-- provider-backed S3-compatible upload/download streaming
+- final storage provider, bucket policy, and CORS configuration
+- optional server-side file proxy/streaming for clients that cannot consume provider URLs directly
 - final proof/document retention periods

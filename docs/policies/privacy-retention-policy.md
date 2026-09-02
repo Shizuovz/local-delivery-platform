@@ -71,5 +71,6 @@ Retention cleanup removes private file references from expired proof/document re
 
 - Local dev may use mock OTP and mock payment.
 - Local dev may use mock private proof/document file references, but API responses must expose only sanitized metadata and signed access URLs.
+- Production storage mode must use a private S3-compatible bucket, pre-signed upload/read URLs, and bucket CORS rules that allow only approved client origins.
 - Local dev must not contain real customer data, rider documents, or payment secrets.
 - `.env` files and provider keys must not be committed.

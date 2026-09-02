@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1124.0",
+    "@aws-sdk/s3-request-presigner": "^3.1124.0",
     "@local-delivery/database": "file:../../packages/database",
     "@local-delivery/types": "file:../../packages/types",
     "@local-delivery/validation": "file:../../packages/validation",

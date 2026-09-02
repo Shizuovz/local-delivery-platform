@@ -195,7 +195,7 @@ Clients upload to the signed URL, then submit the returned object key as `photoO
 PUT /storage/mock-upload?key=<objectKey>&contentType=<contentType>&expires=<unix_ms>&token=<signature>
 ```
 
-Local development verifies the upload signature and returns stored-object metadata. Production S3-compatible storage should replace this with provider-generated pre-signed URLs without changing the client proof flow.
+Local development verifies the upload signature and returns stored-object metadata. When `OBJECT_STORAGE_PROVIDER=s3-compatible` or `OBJECT_STORAGE_PROVIDER=s3` is configured with endpoint, bucket, and credentials, this same API returns provider-generated pre-signed URLs without changing the client proof flow.
 
 ## Rider Endpoints
 
@@ -360,6 +360,7 @@ Implemented for the functional spine:
 - Cache policy and Redis-backed admin operations report
 - Admin dashboard operations metrics
 - S3-compatible private object key abstraction with local mock signed uploads
+- Provider-backed S3-compatible pre-signed upload/read URLs
 - Signed proof upload URL endpoint
 - Signed rider document URLs for rider/admin views
 - Proof and rider document retention cleanup service/job
@@ -370,4 +371,5 @@ Not yet implemented:
 - Real provider refund API calls
 - Full pricing/service-zone admin configuration
 - Full admin report exports and payment/refund monitoring screens
-- Provider-backed S3-compatible upload/download streaming
+- Final storage provider selection and bucket/CORS policy
+- Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly

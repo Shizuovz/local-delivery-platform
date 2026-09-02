@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiExceptionFilter } from './common/api-exception.filter';
 import { ConflictError } from './common/domain-errors';
+import { ObjectStorageService } from './common/object-storage.service';
 import { RateLimitService } from './common/rate-limit.service';
 import {
   DISPATCH_DELIVERY_QUEUE,
@@ -80,6 +81,68 @@ describe('API runtime hardening', () => {
     });
 
     process.env.DISPATCH_QUEUE_MODE = previous;
+  });
+
+  it('uses local mock storage URLs unless S3-compatible storage is configured', async () => {
+    const previousProvider = process.env.OBJECT_STORAGE_PROVIDER;
+    delete process.env.OBJECT_STORAGE_PROVIDER;
+
+    const storage = new ObjectStorageService();
+    const upload = await storage.createSignedUpload({
+      scope: 'proofs',
+      ownerId: 'delivery-1',
+      fileName: 'proof.jpg',
+      contentType: 'image/jpeg',
+    });
+
+    expect(upload.storageProvider).toBe('mock-s3-compatible');
+    expect(upload.uploadUrl).toContain('/api/v1/storage/mock-upload');
+    expect(storage.verifyUploadUrl(upload.objectKey, 'image/jpeg', Date.parse(upload.expiresAt), new URL(upload.uploadUrl, 'http://localhost').searchParams.get('token') ?? undefined)).toBe(true);
+
+    process.env.OBJECT_STORAGE_PROVIDER = previousProvider;
+  });
+
+  it('creates provider-backed S3-compatible presigned upload and read URLs', async () => {
+    const previous = {
+      provider: process.env.OBJECT_STORAGE_PROVIDER,
+      endpoint: process.env.OBJECT_STORAGE_ENDPOINT,
+      bucket: process.env.OBJECT_STORAGE_BUCKET,
+      accessKeyId: process.env.OBJECT_STORAGE_ACCESS_KEY_ID,
+      secretAccessKey: process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY,
+      region: process.env.OBJECT_STORAGE_REGION,
+    };
+    process.env.OBJECT_STORAGE_PROVIDER = 's3-compatible';
+    process.env.OBJECT_STORAGE_ENDPOINT = 'http://localhost:9000';
+    process.env.OBJECT_STORAGE_BUCKET = 'private-test-bucket';
+    process.env.OBJECT_STORAGE_ACCESS_KEY_ID = 'test-access-key';
+    process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = 'test-secret-key';
+    process.env.OBJECT_STORAGE_REGION = 'us-east-1';
+
+    try {
+      const storage = new ObjectStorageService();
+      const upload = await storage.createSignedUpload({
+        scope: 'rider-documents',
+        ownerId: 'rider-1',
+        fileName: 'license.pdf',
+        contentType: 'application/pdf',
+      });
+      const read = await storage.createSignedRead(upload.objectKey);
+
+      expect(upload.storageProvider).toBe('s3-compatible');
+      expect(upload.bucket).toBe('private-test-bucket');
+      expect(upload.objectKey).toMatch(/^private\/rider-documents\/rider-1\/.+-license\.pdf$/);
+      expect(upload.uploadUrl).toContain('X-Amz-Signature=');
+      expect(upload.uploadUrl).toContain('private-test-bucket');
+      expect(read?.readUrl).toContain('X-Amz-Signature=');
+      expect(read?.objectKey).toBe(upload.objectKey);
+    } finally {
+      process.env.OBJECT_STORAGE_PROVIDER = previous.provider;
+      process.env.OBJECT_STORAGE_ENDPOINT = previous.endpoint;
+      process.env.OBJECT_STORAGE_BUCKET = previous.bucket;
+      process.env.OBJECT_STORAGE_ACCESS_KEY_ID = previous.accessKeyId;
+      process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = previous.secretAccessKey;
+      process.env.OBJECT_STORAGE_REGION = previous.region;
+    }
   });
 });
 
