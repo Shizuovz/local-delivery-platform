@@ -32,7 +32,7 @@ function setup() {
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue, paymentProvider);
   const deliveries = new DeliveriesService(store, dispatch, prisma, pricing, serviceZones, paymentProvider, payments);
   const proofsService = new ProofsService(store, prisma, deliveries, storage);
-  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue, pricing, serviceZones);
+  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue, pricing, serviceZones, paymentProvider);
   const cache = noCache();
   const adminService = new AdminService(store, dispatch, prisma, deliveries, cache, storage, payments);
   const riders = new RidersService(store, deliveries, dispatch, prisma, storage);
@@ -266,6 +266,23 @@ runInMemory('functional SEND spine', () => {
     expect(webhook.payment.status).toBe(PaymentStatus.PAID);
     expect(webhook.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
     expect(duplicate.duplicate).toBe(true);
+  });
+
+  it('returns client-safe checkout handoff data for the delivery owner', async () => {
+    const { deliveries, payments, customer } = setup();
+    const quote = deliveries.createQuote(customer, quoteInput);
+    const created = deliveries.createDelivery(customer, { quoteId: quote.id, idempotencyKey: 'send-checkout-001' });
+
+    const checkout = await payments.checkoutForActor(customer, created.payment.id);
+
+    expect(checkout.payment.id).toBe(created.payment.id);
+    expect(checkout.checkout).toEqual(expect.objectContaining({
+      mode: 'mock',
+      providerRef: created.payment.providerRef,
+      amountMinor: created.payment.amountMinor,
+      currency: created.payment.currency,
+    }));
+    expect(JSON.stringify(checkout)).not.toContain('SECRET');
   });
 
   it('rejects mock payment webhooks with an invalid signature', () => {

@@ -224,4 +224,4 @@ These are not frozen yet and should be decided before production launch:
 
 Current decision area: checkout handoff and reconciliation cadence.
 
-Provider-backed S3 storage, admin-managed pricing/service-zone configuration, and Razorpay-compatible payment provider integration are now covered by the implementation plan. The next launch-risk decisions are how the customer app opens Razorpay checkout, how often payment reconciliation runs, and how finance reports should represent provider fees, settlements, refunds, and contribution margin.
+Provider-backed S3 storage, admin-managed pricing/service-zone configuration, Razorpay-compatible payment provider integration, checkout handoff, and scheduled stale-payment reconciliation are now covered by the implementation plan. The next launch-risk decisions are native mobile Razorpay SDK rollout and how finance reports should represent provider fees, settlements, refunds, and contribution margin.

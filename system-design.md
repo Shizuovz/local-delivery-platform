@@ -199,13 +199,18 @@ APIs are action-oriented where state transitions are involved. For example, ride
 - `GET /api/v1/admin/support/tickets`
 - `PATCH /api/v1/admin/support/tickets/:id`
 - `GET /api/v1/admin/reports/operations`
+- `GET /api/v1/admin/payments`
+- `POST /api/v1/admin/payments/:id/reconcile`
 - `GET /api/v1/admin/audit-logs`
 
-### Payment Webhook APIs
+### Payment APIs
 
-- `POST /api/v1/webhooks/payments/:provider`
+- `GET /api/v1/payments/:id/checkout`
+- `POST /api/v1/payments/mock/confirm`
+- `POST /api/v1/payments/webhooks/mock`
+- `POST /api/v1/payments/webhooks/razorpay`
 
-Webhook endpoints must verify provider signature, store raw provider event IDs, and process events idempotently.
+Checkout APIs return only client-safe provider options. Webhook endpoints must verify provider signature, store raw provider event IDs, and process events idempotently.
 
 ## 6. Core Request Flows
 
@@ -436,7 +441,7 @@ Rules:
 
 ```text
 Payment Provider
-  -> POST /webhooks/payments/:provider
+  -> POST /payments/webhooks/:provider
 API
   -> verify signature
   -> extract provider_event_id
@@ -584,7 +589,7 @@ Prefer short retention for raw GPS and OTP challenges. Preserve audit and financ
 | `dispatch.delivery` | Find and offer eligible riders. |
 | `dispatch.offer-timeout` | Expire rider offers and continue assignment. |
 | `notifications.send` | Send push/SMS/WhatsApp/email. |
-| `payment.reconcile` | Reconcile provider payment state. |
+| `payment.reconcile` | Scheduled worker reconciles stale provider-backed pending payment state. |
 | `delivery.timeout` | Detect stale or stuck deliveries. |
 | `rider.location.cleanup` | Remove or aggregate old location data. |
 | `reports.daily` | Generate operational and financial summaries. |
@@ -990,4 +995,3 @@ These decisions must be frozen before production implementation:
 - rider payout formula
 - business settlement cadence
 - support escalation SLA
-

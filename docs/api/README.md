@@ -44,6 +44,20 @@ Protected endpoints require:
 x-user-id: <user id>
 ```
 
+## Worker Commands
+
+```text
+npm run worker:payments
+```
+
+The payment reconciliation worker periodically scans stale non-mock `CREATED`/`PENDING` payments and reloads provider state from the payment provider. Configure cadence with:
+
+```text
+PAYMENT_RECONCILE_INTERVAL_MS=300000
+PAYMENT_RECONCILE_MIN_AGE_MS=300000
+PAYMENT_RECONCILE_BATCH_SIZE=50
+```
+
 ## Error Shape
 
 All runtime errors should return:
@@ -172,6 +186,63 @@ x-mock-payment-signature: dev-mock-payment-secret
 ```
 
 The mock webhook is public from the auth guard perspective but must include the mock signature header. Duplicate `providerEventId` values are idempotent.
+
+### Checkout Handoff
+
+```http
+GET /payments/:id/checkout
+```
+
+Returns client-safe checkout information for the authenticated customer, owning business user, finance/admin user, or ops/admin user. The response never includes provider secrets.
+
+Mock response shape:
+
+```json
+{
+  "payment": {
+    "id": "payment_uuid",
+    "deliveryId": "delivery_uuid",
+    "provider": "mock",
+    "providerRef": "mock_delivery_uuid",
+    "amountMinor": 8500,
+    "currency": "INR",
+    "status": "PENDING"
+  },
+  "checkout": {
+    "mode": "mock",
+    "providerRef": "mock_delivery_uuid",
+    "amountMinor": 8500,
+    "currency": "INR"
+  }
+}
+```
+
+Razorpay response shape:
+
+```json
+{
+  "payment": {
+    "id": "payment_uuid",
+    "deliveryId": "delivery_uuid",
+    "provider": "razorpay",
+    "providerRef": "order_provider_id",
+    "amountMinor": 8500,
+    "currency": "INR",
+    "status": "PENDING"
+  },
+  "checkout": {
+    "mode": "razorpay",
+    "keyId": "rzp_test_xxx",
+    "orderId": "order_provider_id",
+    "amountMinor": 8500,
+    "currency": "INR",
+    "name": "Local Delivery",
+    "description": "Delivery abc12345"
+  }
+}
+```
+
+Client checkout completion is only a handoff signal. Backend webhooks or backend reconciliation must mark the payment `PAID`.
 
 ### Razorpay Payment Webhook
 
@@ -476,6 +547,8 @@ Implemented for the functional spine:
 - Razorpay webhook signature verification and idempotent payment/refund event handling
 - Provider refund adapter for mock and Razorpay refunds
 - Admin payment monitoring and manual reconciliation endpoint
+- Customer/business checkout handoff endpoint
+- Scheduled payment reconciliation worker
 - S3-compatible private object key abstraction with local mock signed uploads
 - Provider-backed S3-compatible pre-signed upload/read URLs
 - Signed proof upload URL endpoint
@@ -488,8 +561,7 @@ Implemented for the functional spine:
 Not yet implemented:
 
 - Full admin report exports and payment/refund monitoring screens
-- Customer checkout UI integration with Razorpay SDK/client checkout handoff
-- Payment reconciliation scheduled worker
+- Native mobile Razorpay SDK module installation for non-web builds
 - Rich finance reports for settlements, fees, and contribution margin
 - Final storage provider selection and bucket/CORS policy
 - Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly

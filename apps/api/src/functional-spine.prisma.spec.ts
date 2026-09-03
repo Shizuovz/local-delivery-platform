@@ -56,7 +56,7 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue, paymentProvider);
   const deliveries = new DeliveriesService(store, dispatch, prisma, pricing, serviceZones, paymentProvider, payments);
   const proofsService = new ProofsService(store, prisma, deliveries, storage);
-  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue, pricing, serviceZones);
+  const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue, pricing, serviceZones, paymentProvider);
   const riders = new RidersService(store, deliveries, dispatch, prisma, storage);
   const actors = new ActorService(store, prisma);
   const auth = new AuthService(store, prisma);
@@ -170,6 +170,57 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     expect(webhook.payment.status).toBe(PaymentStatus.PAID);
     expect(webhook.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
     expect(duplicate.duplicate).toBe(true);
+  });
+
+  it('returns checkout handoff data and reconciles stale provider-backed pending payments', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const created = await createConfirmedDelivery(customer);
+    const providerOrderId = `order_reconcile_${created.payment.id}`;
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_checkout_key';
+    process.env.RAZORPAY_KEY_SECRET = 'rzp_test_checkout_secret';
+    process.env.PAYMENT_RECONCILE_MIN_AGE_MS = '0';
+    await prisma.payment.updateMany({
+      where: { provider: { not: 'mock' }, status: { in: ['CREATED', 'PENDING'] } },
+      data: { status: 'FAILED' },
+    });
+    await prisma.payment.update({
+      where: { id: created.payment.id },
+      data: { provider: 'razorpay', providerRef: providerOrderId },
+    });
+    const originalFetch = global.fetch;
+    global.fetch = async (url) => {
+      expect(String(url)).toContain(`/orders/${providerOrderId}`);
+      return {
+        ok: true,
+        json: async () => ({
+          id: providerOrderId,
+          status: 'paid',
+          amount_paid: created.payment.amountMinor,
+        }),
+      } as Response;
+    };
+
+    try {
+      const checkout = await payments.checkoutForActor(customer, created.payment.id);
+      const reconciliation = await payments.reconcilePendingPayments('scheduled payment reconciliation test');
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: created.payment.id } });
+      const assignments = await prisma.assignment.findMany({ where: { deliveryId: created.delivery.id } });
+
+      expect(checkout.checkout).toEqual(expect.objectContaining({
+        mode: 'razorpay',
+        keyId: 'rzp_test_checkout_key',
+        orderId: providerOrderId,
+      }));
+      expect(reconciliation.reconciled).toBeGreaterThanOrEqual(1);
+      expect(payment.status).toBe(PaymentStatus.PAID);
+      expect(assignments.some((assignment) => assignment.riderId === rider.id)).toBe(true);
+    } finally {
+      global.fetch = originalFetch;
+      delete process.env.RAZORPAY_KEY_ID;
+      delete process.env.RAZORPAY_KEY_SECRET;
+      delete process.env.PAYMENT_RECONCILE_MIN_AGE_MS;
+    }
   });
 
   it('refunds paid prepaid cancellation before pickup', async () => {

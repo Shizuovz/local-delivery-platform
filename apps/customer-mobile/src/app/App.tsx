@@ -1,8 +1,30 @@
 import { useState } from 'react';
-import { ActivityIndicator, Button, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Button, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 const DEFAULT_API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 const DEFAULT_PHONE = '+919999999999';
+
+type CheckoutState = {
+  payment: {
+    id: string;
+    provider: string;
+    providerRef: string;
+    amountMinor: number;
+    currency: string;
+    status: string;
+  };
+  checkout: {
+    mode: string;
+    keyId?: string;
+    orderId?: string;
+    providerRef: string;
+    amountMinor: number;
+    currency: string;
+    name?: string;
+    description?: string;
+    prefill?: { contact?: string };
+  };
+};
 
 export default function App() {
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
@@ -10,8 +32,10 @@ export default function App() {
   const [userId, setUserId] = useState('');
   const [quoteId, setQuoteId] = useState('');
   const [paymentId, setPaymentId] = useState('');
+  const [paymentProvider, setPaymentProvider] = useState('');
   const [paymentProviderRef, setPaymentProviderRef] = useState('');
   const [paymentAmountMinor, setPaymentAmountMinor] = useState(0);
+  const [checkout, setCheckout] = useState<CheckoutState | null>(null);
   const [deliveryId, setDeliveryId] = useState('');
   const [proofSignedUrl, setProofSignedUrl] = useState('');
   const [deliveryType, setDeliveryType] = useState<'SEND' | 'LIMITED_FETCH'>('SEND');
@@ -77,11 +101,23 @@ export default function App() {
     });
     setDeliveryId(result.delivery.id);
     setPaymentId(result.payment.id);
+    setPaymentProvider(result.payment.provider);
+    setPaymentProviderRef(result.payment.providerRef);
+    setPaymentAmountMinor(result.payment.amountMinor);
+    await loadCheckout(result.payment.id);
+  }
+
+  async function loadCheckout(targetPaymentId = paymentId) {
+    if (!targetPaymentId) throw new Error('Create a delivery first');
+    const result = await api(`/payments/${targetPaymentId}/checkout`);
+    setCheckout(result);
+    setPaymentId(result.payment.id);
+    setPaymentProvider(result.payment.provider);
     setPaymentProviderRef(result.payment.providerRef);
     setPaymentAmountMinor(result.payment.amountMinor);
   }
 
-  async function pay() {
+  async function confirmMockPayment() {
     await api('/payments/webhooks/mock', {
       method: 'POST',
       headers: { 'x-mock-payment-signature': 'dev-mock-payment-secret' },
@@ -93,6 +129,23 @@ export default function App() {
         currency: 'INR',
       }),
     });
+    if (deliveryId) await track();
+  }
+
+  async function startCheckout() {
+    const current = checkout ?? await api(`/payments/${paymentId}/checkout`);
+    setCheckout(current);
+    if (current.checkout.mode === 'mock') {
+      await confirmMockPayment();
+      return;
+    }
+    if (current.checkout.mode !== 'razorpay') {
+      throw new Error(`Unsupported checkout provider: ${current.checkout.mode}`);
+    }
+    if (Platform.OS !== 'web') {
+      throw new Error('Razorpay native SDK handoff is not installed yet. Use mock mode for local native testing.');
+    }
+    await openRazorpayWebCheckout(current);
   }
 
   async function track() {
@@ -133,6 +186,7 @@ export default function App() {
       <Field label="User ID" value={userId} onChangeText={setUserId} />
       <Field label="Quote ID" value={quoteId} onChangeText={setQuoteId} />
       <Field label="Payment ID" value={paymentId} onChangeText={setPaymentId} />
+      <Field label="Payment Provider" value={paymentProvider} onChangeText={setPaymentProvider} />
       <Field label="Payment Provider Ref" value={paymentProviderRef} onChangeText={setPaymentProviderRef} />
       <Field label="Delivery ID" value={deliveryId} onChangeText={setDeliveryId} />
       <Field label="Proof Signed URL" value={proofSignedUrl} onChangeText={setProofSignedUrl} />
@@ -146,7 +200,9 @@ export default function App() {
         <Button title="1. Login" disabled={busy} onPress={() => runStep('Login', login)} />
         <Button title="2. Create Quote" disabled={busy || !userId} onPress={() => runStep('Create quote', quote)} />
         <Button title="3. Create Delivery" disabled={busy || !quoteId} onPress={() => runStep('Create delivery', createDelivery)} />
-        <Button title="4. Confirm Payment Webhook" disabled={busy || !paymentProviderRef || !paymentAmountMinor} onPress={() => runStep('Confirm payment webhook', pay)} />
+        <Button title="4. Load Checkout" disabled={busy || !paymentId} onPress={() => runStep('Load checkout', () => loadCheckout().then(() => undefined))} />
+        <Button title="5. Start Checkout" disabled={busy || !paymentId} onPress={() => runStep('Start checkout', startCheckout)} />
+        <Button title="Mock Pay And Dispatch" disabled={busy || paymentProvider !== 'mock' || !paymentProviderRef || !paymentAmountMinor} onPress={() => runStep('Mock pay and dispatch', confirmMockPayment)} />
         <Button title="5. Track" disabled={busy || !deliveryId} onPress={() => runStep('Track delivery', track)} />
         <Button title="6. View Proof" disabled={busy || !deliveryId} onPress={() => runStep('View proof', proof)} />
         <Button title="7. Read Signed Proof File" disabled={busy || !proofSignedUrl} onPress={() => runStep('Read signed proof file', readProofFile)} />
@@ -154,9 +210,52 @@ export default function App() {
       </View>
 
       <Text style={styles.sectionTitle}>Latest API Response</Text>
+      <Text style={styles.output}>
+        {checkout
+          ? `Checkout: ${checkout.checkout.mode} ${formatMoney(checkout.checkout.amountMinor, checkout.checkout.currency)}\nOrder: ${checkout.checkout.orderId ?? checkout.checkout.providerRef}`
+          : 'No checkout loaded.'}
+      </Text>
       <Text selectable style={styles.output}>{output || 'No response yet.'}</Text>
     </ScrollView>
   );
+}
+
+async function openRazorpayWebCheckout(checkout: CheckoutState) {
+  await loadRazorpayScript();
+  const RazorpayCheckout = (window as unknown as { Razorpay?: new (options: Record<string, unknown>) => { open: () => void } }).Razorpay;
+  if (!RazorpayCheckout) throw new Error('Razorpay Checkout failed to load');
+  const instance = new RazorpayCheckout({
+    key: checkout.checkout.keyId,
+    amount: checkout.checkout.amountMinor,
+    currency: checkout.checkout.currency,
+    name: checkout.checkout.name ?? 'Local Delivery',
+    description: checkout.checkout.description,
+    order_id: checkout.checkout.orderId,
+    prefill: checkout.checkout.prefill,
+    handler: (response: unknown) => {
+      console.log('Razorpay checkout completed; backend webhook remains source of truth', response);
+    },
+  });
+  instance.open();
+}
+
+async function loadRazorpayScript() {
+  const existing = document.querySelector('script[data-razorpay-checkout]');
+  if (existing) return;
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.dataset.razorpayCheckout = 'true';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Unable to load Razorpay Checkout'));
+    document.body.appendChild(script);
+  });
+}
+
+function formatMoney(amountMinor?: number, currency = 'INR') {
+  if (typeof amountMinor !== 'number') return currency;
+  return `${currency} ${(amountMinor / 100).toFixed(2)}`;
 }
 
 function Field(props: { label: string; value: string; onChangeText: (value: string) => void }) {

@@ -11,11 +11,13 @@ import {
   PaymentStatus,
   User,
 } from '@local-delivery/types';
+import { createHash } from 'crypto';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../common/domain-errors';
 import { InMemoryStore } from '../../common/in-memory-store';
 import { PrismaService } from '../../common/prisma.service';
 import { DispatchQueueService } from '../dispatch/dispatch.queue';
 import { DispatchService } from '../dispatch/dispatch.service';
+import { PaymentProviderService } from '../payments/payment-provider.service';
 import { PricingService } from '../pricing/pricing.service';
 import { ServiceZonesService } from '../service-zones/service-zones.service';
 import { CreateBusinessDeliveryDto } from './businesses.dto';
@@ -38,6 +40,7 @@ export class BusinessesService {
     private readonly dispatchQueue: DispatchQueueService,
     private readonly pricingService: PricingService,
     private readonly serviceZonesService: ServiceZonesService,
+    private readonly paymentProvider: PaymentProviderService,
   ) {}
 
   profile(actor: User) {
@@ -215,6 +218,15 @@ export class BusinessesService {
       zoneCode: zone.code,
     });
 
+    const providerOrder = business.billingMode === 'PREPAID'
+      ? await this.paymentProvider.createOrder({
+        amountMinor: pricing.amountMinor,
+        currency: pricing.currency,
+        receipt: `b_${createHash('sha256').update(`${business.id}:${input.idempotencyKey}`).digest('hex').slice(0, 32)}`,
+        notes: { businessId: business.id, actorId: actor.id, idempotencyKey: input.idempotencyKey },
+      })
+      : null;
+
     const result = await this.prisma.$transaction(async (tx) => {
       const pickup = await tx.address.create({ data: input.pickupAddress });
       const drop = await tx.address.create({ data: input.dropAddress });
@@ -265,8 +277,8 @@ export class BusinessesService {
         ? await tx.payment.create({
           data: {
             deliveryId: delivery.id,
-            provider: 'mock',
-            providerRef: `mock_business_${delivery.id}`,
+            provider: providerOrder!.provider,
+            providerRef: providerOrder!.providerRef,
             amountMinor: quote.amountMinor,
             currency: quote.currency,
             status: 'PENDING',
@@ -301,7 +313,12 @@ export class BusinessesService {
           action: 'business.delivery.create',
           entityType: 'delivery',
           entityId: delivery.id,
-          metadata: { businessId: business.id, billingMode: business.billingMode },
+          metadata: {
+            businessId: business.id,
+            billingMode: business.billingMode,
+            paymentProvider: providerOrder?.provider,
+            providerRef: providerOrder?.providerRef,
+          },
         },
       });
       await tx.idempotencyKey.create({

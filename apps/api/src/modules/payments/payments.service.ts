@@ -131,6 +131,25 @@ export class PaymentsService {
     return { ignored: true, event: input.event };
   }
 
+  async checkoutForActor(actor: User, paymentId: string) {
+    if (!this.prisma.isEnabled()) {
+      const payment = this.store.payments.get(paymentId);
+      if (!payment) throw new NotFoundError('Payment not found');
+      const delivery = this.store.deliveries.get(payment.deliveryId);
+      if (!delivery) throw new NotFoundError('Delivery not found');
+      this.authorizePaymentReadFromMemory(actor, delivery);
+      return this.checkoutPayload(actor, payment);
+    }
+
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { delivery: { include: { business: true } } },
+    });
+    if (!payment) throw new NotFoundError('Payment not found');
+    this.authorizePaymentReadWithPrisma(actor, payment.delivery);
+    return this.checkoutPayload(actor, payment);
+  }
+
   async reconcilePayment(actor: User, paymentId: string, reason: string) {
     this.requireAdmin(actor);
     if (!this.prisma.isEnabled()) {
@@ -197,6 +216,53 @@ export class PaymentsService {
           : await this.dispatchService.dispatchDelivery(updated.deliveryId)
         : null,
     };
+  }
+
+  async reconcilePendingPayments(reason = 'Scheduled payment reconciliation') {
+    if (!this.prisma.isEnabled()) {
+      return { reconciled: 0, failed: 0, skipped: 'Prisma persistence is disabled' };
+    }
+
+    const minAgeMs = Number(process.env.PAYMENT_RECONCILE_MIN_AGE_MS ?? 5 * 60 * 1000);
+    const batchSize = Number(process.env.PAYMENT_RECONCILE_BATCH_SIZE ?? 50);
+    const cutoff = new Date(Date.now() - minAgeMs);
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        provider: { not: 'mock' },
+        status: { in: ['CREATED', 'PENDING'] },
+        createdAt: { lte: cutoff },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: batchSize,
+    });
+    const systemActorId = await this.systemActorIdWithPrisma();
+    const actor: User = {
+      id: systemActorId,
+      phone: 'system',
+      status: 'ACTIVE',
+      roles: ['OPS_ADMIN'],
+      createdAt: new Date().toISOString(),
+    };
+    const results = [];
+    let failed = 0;
+    for (const payment of payments) {
+      try {
+        results.push(await this.reconcilePayment(actor, payment.id, reason));
+      } catch (error) {
+        failed += 1;
+        console.error(JSON.stringify({
+          service: 'local-delivery-worker',
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          event: 'payment.reconcile.failed',
+          paymentId: payment.id,
+          provider: payment.provider,
+          providerRef: payment.providerRef,
+          error: error instanceof Error ? { name: error.name, message: error.message } : { message: 'Unknown error' },
+        }));
+      }
+    }
+    return { scanned: payments.length, reconciled: results.length, failed };
   }
 
   async refundPayment(
@@ -502,6 +568,66 @@ export class PaymentsService {
     if (!actor.roles.includes('OPS_ADMIN') && !actor.roles.includes('SUPER_ADMIN')) {
       throw new ForbiddenError('Admin role required');
     }
+  }
+
+  private authorizePaymentReadFromMemory(actor: User, delivery: { customerId?: string; businessId?: string | null }) {
+    if (this.isAdmin(actor)) return;
+    if (delivery.customerId === actor.id) return;
+    if (
+      delivery.businessId
+      && actor.roles.includes('BUSINESS')
+      && this.store.businesses.get(delivery.businessId)?.ownerUserId === actor.id
+    ) {
+      return;
+    }
+    throw new ForbiddenError('Payment does not belong to this user');
+  }
+
+  private authorizePaymentReadWithPrisma(
+    actor: User,
+    delivery: { customerId: string | null; business: { ownerUserId: string } | null },
+  ) {
+    if (this.isAdmin(actor)) return;
+    if (delivery.customerId === actor.id) return;
+    if (actor.roles.includes('BUSINESS') && delivery.business?.ownerUserId === actor.id) return;
+    throw new ForbiddenError('Payment does not belong to this user');
+  }
+
+  private isAdmin(actor: User) {
+    return actor.roles.includes('OPS_ADMIN') || actor.roles.includes('FINANCE_ADMIN') || actor.roles.includes('SUPER_ADMIN');
+  }
+
+  private checkoutPayload(
+    actor: User,
+    payment: { id: string; deliveryId: string; provider: string; providerRef: string; amountMinor: number; currency: string; status: string },
+  ) {
+    const base = this.toPayment(payment);
+    if (payment.provider === 'mock') {
+      return {
+        payment: base,
+        checkout: {
+          mode: 'mock',
+          providerRef: payment.providerRef,
+          amountMinor: payment.amountMinor,
+          currency: payment.currency,
+        },
+      };
+    }
+    const keyId = this.paymentProvider.checkoutKeyId(payment.provider);
+    return {
+      payment: base,
+      checkout: {
+        mode: payment.provider,
+        keyId,
+        orderId: payment.providerRef,
+        providerRef: payment.providerRef,
+        amountMinor: payment.amountMinor,
+        currency: payment.currency,
+        name: 'Local Delivery',
+        description: `Delivery ${payment.deliveryId.slice(0, 8)}`,
+        prefill: { contact: actor.phone },
+      },
+    };
   }
 
   private async handleRazorpayPaymentEvent(input: RazorpayWebhookInput) {

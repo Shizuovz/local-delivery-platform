@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
 import { mockPaymentConfirmSchema, mockPaymentWebhookSchema } from '@local-delivery/validation';
 import { User } from '@local-delivery/types';
 import { CurrentUser } from '../../common/current-user.decorator';
@@ -15,6 +15,12 @@ export class PaymentsController {
   async confirm(@CurrentUser() actor: User, @Body() body: unknown) {
     const input = mockPaymentConfirmSchema.parse(body);
     return this.paymentsService.confirmMockPayment(actor, input.paymentId, input.providerEventId);
+  }
+
+  @Get(':id/checkout')
+  @RateLimit({ key: 'payments.checkout', limit: 60, windowMs: 60 * 1000 })
+  async checkout(@CurrentUser() actor: User, @Param('id') id: string) {
+    return this.paymentsService.checkoutForActor(actor, id);
   }
 
   @Public()

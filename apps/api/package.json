@@ -5,6 +5,7 @@
   "scripts": {
     "start:dev": "ts-node -r tsconfig-paths/register src/main.ts",
     "worker:dispatch": "ts-node -r tsconfig-paths/register src/jobs/dispatch.worker.ts",
+    "worker:payments": "ts-node -r tsconfig-paths/register src/jobs/payment-reconciliation.worker.ts",
     "start": "node dist/apps/api/src/main.js",
     "build": "nest build",
     "test": "vitest run",

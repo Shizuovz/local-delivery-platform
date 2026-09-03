@@ -92,6 +92,8 @@ Completed:
 - Razorpay webhook signature verification and idempotent payment/refund event handling.
 - Provider refund adapter for mock and Razorpay refund calls.
 - Admin payment monitoring and manual payment reconciliation endpoint.
+- Customer and business checkout handoff endpoint with backend-owned payment truth.
+- Scheduled payment reconciliation worker for stale provider-backed pending payments.
 
 ## Verified Workflows
 
@@ -191,8 +193,8 @@ Not yet implemented:
 - Final storage provider selection, bucket policy, and CORS configuration.
 - Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly.
 - Advanced pricing policy support such as peak surcharges, package limits, and business-specific rate cards.
-- Customer checkout UI integration with Razorpay SDK/client checkout handoff.
-- Scheduled payment reconciliation worker.
+- Live Razorpay checkout validation with provider test credentials.
+- Native mobile Razorpay SDK installation for non-web builds.
 - Full admin report exports and richer finance monitoring screens.
 - Business delivery reports/export.
 - External alert delivery integration such as Sentry/Datadog/PagerDuty.
@@ -220,6 +222,6 @@ Pre-build decisions still need final policy choices:
 
 ## Recommended Next Step
 
-Current build slice: payment provider integration.
+Current build slice: UI workflow tightening and payment reconciliation.
 
-Current recommended slice after payments: customer checkout UI handoff and scheduled payment reconciliation worker, followed by richer finance reporting for settlements, payment fees, refunds, and contribution margin.
+Current recommended slice after workflow tightening: native mobile payment SDK installation, then richer finance reporting for settlements, payment fees, refunds, and contribution margin.

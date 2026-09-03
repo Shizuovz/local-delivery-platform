@@ -87,6 +87,7 @@ Payment:
 - `POST /payments/mock/confirm`
 - `POST /payments/webhooks/mock`
 - `POST /payments/webhooks/razorpay`
+- `GET /payments/:id/checkout`
 
 Rider:
 
@@ -419,11 +420,12 @@ Current payment provider foundation includes:
 - admin payment list endpoint with delivery/refund/transaction detail
 - admin payment reconciliation endpoint
 - minimal admin dashboard payment monitor and reconcile action
+- customer/business checkout handoff endpoint that exposes only client-safe provider options
+- scheduled payment reconciliation worker for stale provider-backed pending payments
 
 Next spec gap:
 
-- customer checkout UI handoff to Razorpay/client SDK
-- scheduled payment reconciliation worker
+- native mobile Razorpay SDK installation for non-web customer builds
 - richer finance reporting for provider fees, settlements, refunds, and contribution margin
 - advanced pricing policy support such as peak surcharges, package limits, and business-specific rate cards
 - final storage bucket policy and CORS configuration

@@ -131,6 +131,14 @@ export class PaymentProviderService {
     }
   }
 
+  checkoutKeyId(provider: string) {
+    if (provider === 'mock') return undefined;
+    if (provider !== 'razorpay') throw new ConflictError(`Unsupported payment provider: ${provider}`);
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    if (!keyId) throw new ConflictError('Razorpay checkout key is not configured');
+    return keyId;
+  }
+
   private async razorpayFetch(path: string, init: RequestInit): Promise<Record<string, unknown>> {
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;

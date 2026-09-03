@@ -13,6 +13,7 @@
     "dev:business": "npm --workspace apps/business-web run dev",
     "dev:customer": "npm --workspace apps/customer-mobile run start",
     "dev:rider": "npm --workspace apps/rider-mobile run start",
+    "worker:payments": "npm --workspace apps/api run worker:payments",
     "db:generate": "npm --workspace packages/database run prisma:generate",
     "db:push": "npm --workspace packages/database run prisma:push",
     "db:seed": "npm --workspace packages/database run prisma:seed",

@@ -74,16 +74,32 @@ export default function App() {
     });
   }
 
+  async function readyForOffers() {
+    await goOnline();
+    await sendLocation();
+    await loadOffers();
+  }
+
   async function loadOffers() {
     const result = await api('/rider/jobs/offers');
     if (Array.isArray(result) && result[0]?.id) {
       setAssignmentId(result[0].id);
       if (result[0]?.deliveryId) setDeliveryId(result[0].deliveryId);
+      return result[0].id as string;
     }
+    return '';
   }
 
   async function acceptJob() {
     const result = await api(`/rider/jobs/${assignmentId}/accept`, { method: 'POST' });
+    if (result?.delivery?.id) setDeliveryId(result.delivery.id);
+  }
+
+  async function acceptFirstOffer() {
+    const nextAssignmentId = assignmentId || await loadOffers();
+    if (!nextAssignmentId) throw new Error('No offer loaded');
+    const result = await api(`/rider/jobs/${nextAssignmentId}/accept`, { method: 'POST' });
+    setAssignmentId(nextAssignmentId);
     if (result?.delivery?.id) setDeliveryId(result.delivery.id);
   }
 
@@ -112,13 +128,26 @@ export default function App() {
     });
     setProofObjectKey(result.objectKey);
     await signedUpload(result.uploadUrl, 'image/jpeg');
+    return result.objectKey as string;
   }
 
-  async function deliverWithPhotoProof() {
+  async function deliverWithPhotoProof(objectKey = proofObjectKey) {
     await api(`/rider/jobs/${assignmentId}/delivered`, {
       method: 'POST',
-      body: JSON.stringify({ photoObjectKey: proofObjectKey }),
+      body: JSON.stringify({ photoObjectKey: objectKey }),
     });
+  }
+
+  async function completeWithPhotoProof() {
+    if (!assignmentId) throw new Error('Accept or enter an assignment ID first');
+    await api(`/rider/jobs/${assignmentId}/arrived-pickup`, { method: 'POST' });
+    await api(`/rider/jobs/${assignmentId}/picked-up`, {
+      method: 'POST',
+      body: JSON.stringify({ pickupReference: 'PKUP-123' }),
+    });
+    await api(`/rider/jobs/${assignmentId}/arrived-drop`, { method: 'POST' });
+    const objectKey = proofObjectKey || await createProofUpload();
+    await deliverWithPhotoProof(objectKey);
   }
 
   async function createDocumentUpload() {
@@ -170,16 +199,19 @@ export default function App() {
 
       <View style={styles.actions}>
         <Button title="1. Login" disabled={busy} onPress={() => runStep('Login', login)} />
+        <Button title="Ready For Offers" disabled={busy || !userId} onPress={() => runStep('Ready for offers', readyForOffers)} />
+        <Button title="Accept First Offer" disabled={busy || !userId} onPress={() => runStep('Accept first offer', acceptFirstOffer)} />
+        <Button title="Complete With Photo Proof" disabled={busy || !assignmentId} onPress={() => runStep('Complete with photo proof', completeWithPhotoProof)} />
         <Button title="2. Go Online" disabled={busy || !userId} onPress={() => runStep('Go online', goOnline)} />
         <Button title="3. Send Location" disabled={busy || !userId} onPress={() => runStep('Send location', sendLocation)} />
-        <Button title="4. Load Offers" disabled={busy || !userId} onPress={() => runStep('Load offers', loadOffers)} />
+        <Button title="4. Load Offers" disabled={busy || !userId} onPress={() => runStep('Load offers', () => loadOffers().then(() => undefined))} />
         <Button title="5. Accept" disabled={busy || !assignmentId} onPress={() => runStep('Accept job', acceptJob)} />
         <Button title="Reject Offer" disabled={busy || !assignmentId} onPress={() => runStep('Reject offer', () => api(`/rider/jobs/${assignmentId}/reject`, { method: 'POST' }).then(() => undefined))} />
         <Button title="6. Arrived Pickup" disabled={busy || !assignmentId} onPress={() => runStep('Arrived pickup', () => api(`/rider/jobs/${assignmentId}/arrived-pickup`, { method: 'POST' }).then(() => undefined))} />
         <Button title="7. Picked Up" disabled={busy || !assignmentId} onPress={() => runStep('Picked up', () => api(`/rider/jobs/${assignmentId}/picked-up`, { method: 'POST', body: JSON.stringify({ pickupReference: 'PKUP-123' }) }).then(() => undefined))} />
         <Button title="8. Arrived Drop" disabled={busy || !assignmentId} onPress={() => runStep('Arrived drop', () => api(`/rider/jobs/${assignmentId}/arrived-drop`, { method: 'POST' }).then(() => undefined))} />
         <Button title="9. Delivered" disabled={busy || !assignmentId} onPress={() => runStep('Delivered', () => api(`/rider/jobs/${assignmentId}/delivered`, { method: 'POST', body: JSON.stringify({ otp: '123456' }) }).then(() => undefined))} />
-        <Button title="9b. Create Proof Upload" disabled={busy || !userId || !deliveryId} onPress={() => runStep('Create proof upload', createProofUpload)} />
+        <Button title="9b. Create Proof Upload" disabled={busy || !userId || !deliveryId} onPress={() => runStep('Create proof upload', () => createProofUpload().then(() => undefined))} />
         <Button title="9c. Delivered With Photo Proof" disabled={busy || !assignmentId || !proofObjectKey} onPress={() => runStep('Delivered with photo proof', deliverWithPhotoProof)} />
         <Button title="10. Earnings" disabled={busy || !userId} onPress={() => runStep('Load earnings', () => api('/rider/earnings').then(() => undefined))} />
         <Button title="11. Create Document Upload" disabled={busy || !userId} onPress={() => runStep('Create document upload', createDocumentUpload)} />
