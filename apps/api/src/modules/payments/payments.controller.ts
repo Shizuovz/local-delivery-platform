@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Post } from '@nestjs/common';
+import { Body, Controller, Headers, Post, Req } from '@nestjs/common';
 import { mockPaymentConfirmSchema, mockPaymentWebhookSchema } from '@local-delivery/validation';
 import { User } from '@local-delivery/types';
 import { CurrentUser } from '../../common/current-user.decorator';
@@ -23,5 +23,16 @@ export class PaymentsController {
   async mockWebhook(@Headers('x-mock-payment-signature') signature: string | undefined, @Body() body: unknown) {
     const input = mockPaymentWebhookSchema.parse(body);
     return this.paymentsService.handleMockWebhook(signature, input);
+  }
+
+  @Public()
+  @Post('webhooks/razorpay')
+  @RateLimit({ key: 'payments.razorpay_webhook', limit: 300, windowMs: 60 * 1000 })
+  async razorpayWebhook(
+    @Headers('x-razorpay-signature') signature: string | undefined,
+    @Body() body: unknown,
+    @Req() request: { rawBody?: Buffer },
+  ) {
+    return this.paymentsService.handleRazorpayWebhook(signature, request.rawBody ?? Buffer.from(JSON.stringify(body)), body);
   }
 }

@@ -18,6 +18,7 @@ import { signProofFileUrl } from '../../common/proof-file-signing';
 import { PrismaService } from '../../common/prisma.service';
 import { DeliveriesService } from '../deliveries/deliveries.service';
 import { DispatchService } from '../dispatch/dispatch.service';
+import { PaymentsService } from '../payments/payments.service';
 
 @Injectable()
 export class AdminService {
@@ -28,6 +29,7 @@ export class AdminService {
     private readonly deliveriesService: DeliveriesService,
     private readonly cache: CacheService,
     private readonly storage: ObjectStorageService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   listDeliveries(actor: User) {
@@ -242,6 +244,35 @@ export class AdminService {
       : this.operationsReportFromMemory(cacheKey, ttlSeconds);
     await this.cache.setJson(cacheKey, report, { ttlSeconds });
     return report;
+  }
+
+  listPayments(actor: User) {
+    this.requireAdmin(actor);
+    if (this.prisma.isEnabled()) {
+      return this.prisma.payment.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        include: {
+          delivery: true,
+          refunds: { orderBy: { createdAt: 'desc' } },
+          transactions: { orderBy: { createdAt: 'desc' }, take: 10 },
+        },
+      });
+    }
+
+    return [...this.store.payments.values()]
+      .sort((left, right) => right.id.localeCompare(left.id))
+      .map((payment) => ({
+        ...payment,
+        delivery: this.store.deliveries.get(payment.deliveryId),
+        refunds: [...this.store.refunds.values()].filter((refund) => refund.paymentId === payment.id),
+        transactions: [...this.store.paymentEvents.values()].map((providerEventId) => ({ providerEventId })),
+      }));
+  }
+
+  reconcilePayment(actor: User, paymentId: string, reason: string) {
+    this.requireAdmin(actor);
+    return this.paymentsService.reconcilePayment(actor, paymentId, reason);
   }
 
   private requireAdmin(actor: User) {

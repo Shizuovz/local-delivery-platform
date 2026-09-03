@@ -21,6 +21,7 @@ test('admin can load cached operations report metrics', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Admin Operations' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Operations Report' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Payments And Refunds' })).toBeVisible();
 
   await page.getByLabel('Admin User ID').fill(admin.id);
   await page.getByRole('button', { name: 'Load Report' }).click();
@@ -31,6 +32,9 @@ test('admin can load cached operations report metrics', async ({ page }) => {
   await expect(page.getByText('Admin Attention', { exact: true })).toBeVisible();
   await expect(page.locator('pre')).toContainText('deliveryCounts');
   await expect(page.locator('pre')).toContainText('dispatchCounts');
+
+  await page.getByRole('button', { name: 'Load Payments' }).click();
+  await expect(page.getByText('Load payments complete')).toBeVisible();
 });
 
 test('admin can review a rider document through signed access', async ({ page }) => {

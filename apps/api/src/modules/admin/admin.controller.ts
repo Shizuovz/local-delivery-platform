@@ -5,6 +5,7 @@ import {
   adminReasonSchema,
   adminRiderStatusSchema,
   adminSupportTicketStatusSchema,
+  adminPaymentReconcileSchema,
 } from '@local-delivery/validation';
 import { User } from '@local-delivery/types';
 import { CurrentUser } from '../../common/current-user.decorator';
@@ -104,5 +105,17 @@ export class AdminController {
   @Get('reports/operations')
   async operationsReport(@CurrentUser() actor: User) {
     return this.adminService.operationsReport(actor);
+  }
+
+  @Get('payments')
+  async payments(@CurrentUser() actor: User) {
+    return this.adminService.listPayments(actor);
+  }
+
+  @Post('payments/:id/reconcile')
+  @RateLimit({ key: 'admin.payment_reconcile', limit: 30, windowMs: 60 * 1000 })
+  async reconcilePayment(@CurrentUser() actor: User, @Param('id') id: string, @Body() body: unknown) {
+    const input = adminPaymentReconcileSchema.parse(body);
+    return this.adminService.reconcilePayment(actor, id, input.reason);
   }
 }

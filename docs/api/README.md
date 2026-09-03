@@ -8,6 +8,20 @@ Base URL:
 http://localhost:4000/api/v1
 ```
 
+## Payment Provider Environment
+
+Local development defaults to the mock provider unless `PAYMENT_PROVIDER=razorpay` is set.
+
+```text
+PAYMENT_PROVIDER=mock | razorpay
+RAZORPAY_KEY_ID=<provider key id>
+RAZORPAY_KEY_SECRET=<provider key secret>
+RAZORPAY_WEBHOOK_SECRET=<webhook signing secret>
+RAZORPAY_API_BASE_URL=https://api.razorpay.com/v1
+```
+
+Do not expose provider secrets to mobile or web clients. The backend creates provider orders, verifies webhooks, initiates refunds, and performs reconciliation.
+
 ## Auth
 
 Local development uses `x-user-id` as a dev access token after OTP verification.
@@ -17,6 +31,7 @@ Public endpoints:
 - `POST /auth/request-otp`
 - `POST /auth/verify-otp`
 - `POST /payments/webhooks/mock`
+- `POST /payments/webhooks/razorpay`
 - `GET /proofs/:id/file`
 - `PUT /storage/mock-upload`
 - `GET /health`
@@ -158,6 +173,22 @@ x-mock-payment-signature: dev-mock-payment-secret
 
 The mock webhook is public from the auth guard perspective but must include the mock signature header. Duplicate `providerEventId` values are idempotent.
 
+### Razorpay Payment Webhook
+
+```http
+POST /payments/webhooks/razorpay
+x-razorpay-signature: <provider signature>
+```
+
+The Razorpay webhook endpoint verifies the provider signature against the raw request body using `RAZORPAY_WEBHOOK_SECRET`. Supported v1 events:
+
+- `payment.captured`
+- `payment.failed`
+- `refund.processed`
+- `refund.failed`
+
+Captured payments are matched by Razorpay `order_id`, amount, and currency before the local payment is marked `PAID` and dispatch is triggered. Duplicate provider events are idempotent.
+
 ### Tracking
 
 ```http
@@ -263,6 +294,8 @@ Rider document list responses return sanitized metadata and a short-lived signed
 - `PATCH /admin/support/tickets/:id`
 - `GET /admin/audit-logs`
 - `GET /admin/reports/operations`
+- `GET /admin/payments`
+- `POST /admin/payments/:id/reconcile`
 - `GET /admin/pricing-rules`
 - `POST /admin/pricing-rules`
 - `GET /admin/service-zones`
@@ -398,6 +431,23 @@ Returns short-lived cached operational counts for the admin dashboard. PostgreSQ
 }
 ```
 
+### Payment Monitoring
+
+```http
+GET /admin/payments
+POST /admin/payments/:id/reconcile
+```
+
+`GET /admin/payments` returns recent payment records with delivery, refund, and transaction details for operations/finance review. Reconcile requests must include a reason:
+
+```json
+{
+  "reason": "Manual provider reconciliation from admin console"
+}
+```
+
+Reconciliation reloads provider state by payment provider reference and records a payment transaction plus audit log. Redis cache is not used for correctness-critical payment writes.
+
 ## Current Scope
 
 Implemented for the functional spine:
@@ -422,6 +472,10 @@ Implemented for the functional spine:
 - Admin dashboard operations metrics
 - Admin-managed pricing rules with audited changes
 - Admin-managed service zones with public active-zone listing
+- Provider-aware payment order creation with mock default and Razorpay support
+- Razorpay webhook signature verification and idempotent payment/refund event handling
+- Provider refund adapter for mock and Razorpay refunds
+- Admin payment monitoring and manual reconciliation endpoint
 - S3-compatible private object key abstraction with local mock signed uploads
 - Provider-backed S3-compatible pre-signed upload/read URLs
 - Signed proof upload URL endpoint
@@ -433,9 +487,10 @@ Implemented for the functional spine:
 
 Not yet implemented:
 
-- Real payment provider integration
-- Real provider refund API calls
 - Full admin report exports and payment/refund monitoring screens
+- Customer checkout UI integration with Razorpay SDK/client checkout handoff
+- Payment reconciliation scheduled worker
+- Rich finance reports for settlements, fees, and contribution margin
 - Final storage provider selection and bucket/CORS policy
 - Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly
 - External alert delivery integration such as Sentry/Datadog/PagerDuty

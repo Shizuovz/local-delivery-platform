@@ -1,6 +1,6 @@
 # Project Context
 
-Last updated: 2026-09-02
+Last updated: 2026-09-03
 
 ## What This Project Is
 
@@ -88,6 +88,10 @@ Completed:
 - Admin-managed pricing rules backed by PostgreSQL/in-memory storage.
 - Admin-managed service zones with active-zone serviceability validation.
 - Quote creation uses configured pricing and immutable pricing snapshots.
+- Provider-aware payment order creation with mock default and Razorpay support.
+- Razorpay webhook signature verification and idempotent payment/refund event handling.
+- Provider refund adapter for mock and Razorpay refund calls.
+- Admin payment monitoring and manual payment reconciliation endpoint.
 
 ## Verified Workflows
 
@@ -183,12 +187,13 @@ Use `db:reset` only for local development databases.
 
 Not yet implemented:
 
-- Real payment provider integration.
-- Real payment provider refund API calls.
+- Production payment-provider credential rollout and live checkout validation.
 - Final storage provider selection, bucket policy, and CORS configuration.
 - Optional server-side file proxy/streaming for clients that cannot consume provider URLs directly.
 - Advanced pricing policy support such as peak surcharges, package limits, and business-specific rate cards.
-- Full admin reports and payment/refund monitoring screens.
+- Customer checkout UI integration with Razorpay SDK/client checkout handoff.
+- Scheduled payment reconciliation worker.
+- Full admin report exports and richer finance monitoring screens.
 - Business delivery reports/export.
 - External alert delivery integration such as Sentry/Datadog/PagerDuty.
 - Production readiness checklist.
@@ -215,6 +220,6 @@ Pre-build decisions still need final policy choices:
 
 ## Recommended Next Step
 
-Current build slice: pricing and service-zone admin configuration.
+Current build slice: payment provider integration.
 
-Current recommended slice after pricing/zones: real payment provider integration, starting with provider order creation, signature verification, webhook reconciliation, and refund-provider adapter.
+Current recommended slice after payments: customer checkout UI handoff and scheduled payment reconciliation worker, followed by richer finance reporting for settlements, payment fees, refunds, and contribution margin.

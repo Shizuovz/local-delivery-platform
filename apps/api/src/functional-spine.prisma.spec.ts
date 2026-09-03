@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createHmac } from 'crypto';
 import { ActorService } from './common/actor.service';
 import { InMemoryStore } from './common/in-memory-store';
 import { PrismaService } from './common/prisma.service';
@@ -14,6 +15,7 @@ import { DispatchService } from './modules/dispatch/dispatch.service';
 import { DeliveriesService } from './modules/deliveries/deliveries.service';
 import { PaymentsService } from './modules/payments/payments.service';
 import { ProofsService } from './modules/proofs/proofs.service';
+import { PaymentProviderService } from './modules/payments/payment-provider.service';
 import { PricingService } from './modules/pricing/pricing.service';
 import { RidersService } from './modules/riders/riders.service';
 import { ServiceZonesService } from './modules/service-zones/service-zones.service';
@@ -48,17 +50,18 @@ runPrisma('Prisma-backed functional SEND spine', () => {
   const dispatchQueue = new DispatchQueueService();
   const dispatch = new DispatchService(store, prisma);
   const storage = new ObjectStorageService();
+  const paymentProvider = new PaymentProviderService();
   const pricing = new PricingService(store, prisma);
   const serviceZones = new ServiceZonesService(store, prisma);
-  const deliveries = new DeliveriesService(store, dispatch, prisma, pricing, serviceZones);
-  const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue);
+  const payments = new PaymentsService(store, dispatch, prisma, dispatchQueue, paymentProvider);
+  const deliveries = new DeliveriesService(store, dispatch, prisma, pricing, serviceZones, paymentProvider, payments);
   const proofsService = new ProofsService(store, prisma, deliveries, storage);
   const businesses = new BusinessesService(store, prisma, dispatch, dispatchQueue, pricing, serviceZones);
   const riders = new RidersService(store, deliveries, dispatch, prisma, storage);
   const actors = new ActorService(store, prisma);
   const auth = new AuthService(store, prisma);
   const cache = noCache();
-  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache, storage);
+  const adminService = new AdminService(store, dispatch, prisma, deliveries, cache, storage, payments);
   const privateFileRetention = new PrivateFileRetentionService(store, prisma);
 
   beforeAll(async () => {
@@ -127,6 +130,42 @@ runPrisma('Prisma-backed functional SEND spine', () => {
       amountMinor: created.payment.amountMinor,
       currency: created.payment.currency,
     });
+
+    expect(webhook.payment.status).toBe(PaymentStatus.PAID);
+    expect(webhook.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
+    expect(duplicate.duplicate).toBe(true);
+  });
+
+  it('handles signed Razorpay payment webhooks idempotently and dispatches paid deliveries', async () => {
+    const customer = await createCustomer();
+    const rider = await demoRiderActor();
+    const created = await createConfirmedDelivery(customer);
+    const providerOrderId = `order_${created.payment.id}`;
+    const rawBody = JSON.stringify({
+      id: `evt_razorpay_${created.payment.id}`,
+      event: 'payment.captured',
+      created_at: Math.floor(Date.now() / 1000),
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_${created.payment.id}`,
+            order_id: providerOrderId,
+            amount: created.payment.amountMinor,
+            currency: created.payment.currency,
+            status: 'captured',
+          },
+        },
+      },
+    });
+    process.env.RAZORPAY_WEBHOOK_SECRET = 'test_razorpay_webhook_secret';
+    await prisma.payment.update({
+      where: { id: created.payment.id },
+      data: { provider: 'razorpay', providerRef: providerOrderId },
+    });
+    const signature = createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET).update(rawBody).digest('hex');
+
+    const webhook = await payments.handleRazorpayWebhook(signature, rawBody, JSON.parse(rawBody));
+    const duplicate = await payments.handleRazorpayWebhook(signature, rawBody, JSON.parse(rawBody));
 
     expect(webhook.payment.status).toBe(PaymentStatus.PAID);
     expect(webhook.dispatch?.offeredAssignment?.riderId).toBe(rider.id);
@@ -205,6 +244,17 @@ runPrisma('Prisma-backed functional SEND spine', () => {
     expect(report.paymentCounts.paid).toBeGreaterThanOrEqual(1);
     expect(report.supportCounts.open).toBeGreaterThanOrEqual(1);
     expect(report.dispatchCounts.adminAttention).toBeGreaterThanOrEqual(1);
+  });
+
+  it('lets admin monitor payment records', async () => {
+    const customer = await createCustomer();
+    const admin = await adminActor();
+    const created = await createConfirmedDelivery(customer);
+    await payments.confirmMockPayment(customer, created.payment.id, `evt-admin-payment-monitor-${created.delivery.id}`);
+
+    const records = await adminService.listPayments(admin);
+
+    expect(records.some((record) => record.id === created.payment.id)).toBe(true);
   });
 
   it('uses admin pricing configuration for new quotes without mutating historical quotes', async () => {

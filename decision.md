@@ -222,6 +222,6 @@ These are not frozen yet and should be decided before production launch:
 
 ## Next Decision To Make
 
-Current decision area: real payment provider integration.
+Current decision area: checkout handoff and reconciliation cadence.
 
-Provider-backed S3 storage and admin-managed pricing/service-zone configuration are now covered by the implementation plan. The next launch-risk decision is the payment provider contract, including order creation, signature verification, webhook reconciliation, refund API calls, and provider-specific failure handling.
+Provider-backed S3 storage, admin-managed pricing/service-zone configuration, and Razorpay-compatible payment provider integration are now covered by the implementation plan. The next launch-risk decisions are how the customer app opens Razorpay checkout, how often payment reconciliation runs, and how finance reports should represent provider fees, settlements, refunds, and contribution margin.

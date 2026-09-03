@@ -86,6 +86,7 @@ Payment:
 
 - `POST /payments/mock/confirm`
 - `POST /payments/webhooks/mock`
+- `POST /payments/webhooks/razorpay`
 
 Rider:
 
@@ -123,6 +124,8 @@ Admin:
 - `PATCH /admin/support/tickets/:id`
 - `GET /admin/audit-logs`
 - `GET /admin/reports/operations`
+- `GET /admin/payments`
+- `POST /admin/payments/:id/reconcile`
 - `GET /admin/pricing-rules`
 - `POST /admin/pricing-rules`
 - `GET /admin/service-zones`
@@ -210,6 +213,10 @@ Required data rules:
 - New quotes use active admin-managed pricing rules.
 - Pickup and drop coordinates must fall inside an active admin-managed service zone.
 - Pricing and service-zone admin edits require a reason and create audit logs.
+- Payment provider order creation is backend-owned.
+- Razorpay webhooks require raw-body HMAC signature verification.
+- Provider payment/refund events are stored in `payment_transactions`.
+- Admin payment reconciliation writes transaction and audit records.
 
 Important tables:
 
@@ -402,9 +409,22 @@ Current pricing and service-zone foundation includes:
 - out-of-zone quote rejection tests
 - minimal admin dashboard controls for pricing and zone JSON updates
 
+Current payment provider foundation includes:
+
+- mock provider remains the local default
+- Razorpay-compatible order creation adapter using provider credentials
+- Razorpay webhook signature verification against raw body
+- idempotent handling for `payment.captured`, `payment.failed`, `refund.processed`, and `refund.failed`
+- provider refund adapter for mock and Razorpay
+- admin payment list endpoint with delivery/refund/transaction detail
+- admin payment reconciliation endpoint
+- minimal admin dashboard payment monitor and reconcile action
+
 Next spec gap:
 
-- real payment provider integration and refund-provider calls
+- customer checkout UI handoff to Razorpay/client SDK
+- scheduled payment reconciliation worker
+- richer finance reporting for provider fees, settlements, refunds, and contribution margin
 - advanced pricing policy support such as peak surcharges, package limits, and business-specific rate cards
 - final storage bucket policy and CORS configuration
 - external alert delivery integration such as Sentry/Datadog/PagerDuty

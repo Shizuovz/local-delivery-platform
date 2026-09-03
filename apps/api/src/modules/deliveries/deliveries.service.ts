@@ -22,6 +22,8 @@ import { InMemoryStore } from '../../common/in-memory-store';
 import { signProofFileUrl } from '../../common/proof-file-signing';
 import { PrismaService } from '../../common/prisma.service';
 import { DispatchService } from '../dispatch/dispatch.service';
+import { PaymentProviderService } from '../payments/payment-provider.service';
+import { PaymentsService } from '../payments/payments.service';
 import { PricingService } from '../pricing/pricing.service';
 import { ServiceZonesService } from '../service-zones/service-zones.service';
 import { CreateDeliveryDto, CreateQuoteDto } from './deliveries.dto';
@@ -58,6 +60,8 @@ export class DeliveriesService {
     private readonly prisma: PrismaService,
     private readonly pricingService: PricingService,
     private readonly serviceZonesService: ServiceZonesService,
+    private readonly paymentProvider: PaymentProviderService,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   createQuote(actor: User, input: CreateQuoteDto): DeliveryQuote | Promise<DeliveryQuote> {
@@ -364,6 +368,13 @@ export class DeliveriesService {
     if (quote.expiresAt.getTime() < Date.now()) throw new ConflictError('Quote expired');
     if (quote.confirmedAt) throw new ConflictError('Quote already confirmed');
 
+    const providerOrder = await this.paymentProvider.createOrder({
+      amountMinor: quote.amountMinor,
+      currency: quote.currency,
+      receipt: `q_${quote.id.replace(/-/g, '')}`,
+      notes: { quoteId: quote.id, actorId: actor.id, idempotencyKey: input.idempotencyKey },
+    });
+
     try {
       return await this.prisma.$transaction(async (tx) => {
         const delivery = await tx.delivery.create({
@@ -380,8 +391,8 @@ export class DeliveriesService {
         const payment = await tx.payment.create({
           data: {
             deliveryId: delivery.id,
-            provider: 'mock',
-            providerRef: `mock_${delivery.id}`,
+            provider: providerOrder.provider,
+            providerRef: providerOrder.providerRef,
             amountMinor: quote.amountMinor,
             currency: quote.currency,
             status: 'PENDING',
@@ -409,7 +420,7 @@ export class DeliveriesService {
             action: 'delivery.create',
             entityType: 'delivery',
             entityId: delivery.id,
-            metadata: { type: quote.type },
+            metadata: { type: quote.type, paymentProvider: providerOrder.provider, providerRef: providerOrder.providerRef },
           },
         });
         await tx.idempotencyKey.create({
@@ -612,41 +623,7 @@ export class DeliveriesService {
     if (payment.status !== PaymentStatus.PAID) return;
 
     const idempotencyKey = `delivery-cancel:${deliveryId}:full-refund`;
-    await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.refund.findUnique({ where: { idempotencyKey } });
-      if (existing) return;
-
-      const refund = await tx.refund.create({
-        data: {
-          paymentId: payment.id,
-          amountMinor: payment.amountMinor,
-          status: 'SUCCEEDED',
-          reason,
-          idempotencyKey,
-          providerRefundRef: `mock_refund_${payment.id}`,
-          requestedBy: actor.id,
-          processedAt: new Date(),
-        },
-      });
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: { status: 'REFUNDED' },
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId: actor.id,
-          action: 'refund.mock_succeeded',
-          entityType: 'refund',
-          entityId: refund.id,
-          reason,
-          metadata: {
-            deliveryId,
-            paymentId: payment.id,
-            amountMinor: refund.amountMinor,
-          },
-        },
-      });
-    });
+    await this.paymentsService.refundPayment(actor, payment, deliveryId, reason, idempotencyKey);
   }
 
   private getDelivery(deliveryId: string) {

@@ -23,11 +23,14 @@ type DeliverySummary = JsonRecord & {
 
 type PaymentSummary = JsonRecord & {
   id?: string;
+  deliveryId?: string;
   status?: string;
   amountMinor?: number;
   currency?: string;
+  provider?: string;
   providerRef?: string;
   refunds?: RefundSummary[];
+  transactions?: JsonRecord[];
 };
 
 type RefundSummary = JsonRecord & {
@@ -151,6 +154,7 @@ export default function AdminOperationsPage() {
   const [phone, setPhone] = useState(DEFAULT_ADMIN_PHONE);
   const [adminUserId, setAdminUserId] = useState('');
   const [deliveries, setDeliveries] = useState<DeliverySummary[]>([]);
+  const [payments, setPayments] = useState<PaymentSummary[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
   const [riderDocuments, setRiderDocuments] = useState<RiderDocumentSummary[]>([]);
   const [pricingRules, setPricingRules] = useState<PricingRuleSummary[]>([]);
@@ -158,6 +162,7 @@ export default function AdminOperationsPage() {
   const [operationsReport, setOperationsReport] = useState<AdminOperationsReport | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [deliveryId, setDeliveryId] = useState('');
+  const [paymentId, setPaymentId] = useState('');
   const [riderId, setRiderId] = useState('');
   const [businessId, setBusinessId] = useState('');
   const [ticketId, setTicketId] = useState('');
@@ -241,6 +246,21 @@ export default function AdminOperationsPage() {
   async function loadOperationsReport() {
     const result = await api<AdminOperationsReport>('/admin/reports/operations');
     setOperationsReport(result);
+  }
+
+  async function loadPayments() {
+    const result = await api<PaymentSummary[]>('/admin/payments');
+    setPayments(Array.isArray(result) ? result : []);
+  }
+
+  async function reconcilePayment() {
+    if (!paymentId) throw new Error('Choose a payment first');
+    await api(`/admin/payments/${paymentId}/reconcile`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+    await loadPayments();
+    await loadOperationsReport();
   }
 
   async function loadPricingRules() {
@@ -361,6 +381,7 @@ export default function AdminOperationsPage() {
 
   function chooseDelivery(delivery: DeliverySummary) {
     setDeliveryId(String(delivery.id ?? ''));
+    setPaymentId(String(paymentsForDelivery(delivery)[0]?.id ?? paymentId));
     setRiderId(String(delivery.assignedRiderId ?? latestAssignment(delivery)?.riderId ?? riderId));
     setBusinessId(String(delivery.businessId ?? businessId));
   }
@@ -389,6 +410,7 @@ export default function AdminOperationsPage() {
           <button disabled={busy || !adminUserId} onClick={() => runStep('Load workspace', async () => {
             await loadOperationsReport();
             await loadDeliveries();
+            await loadPayments();
             await loadSupportTickets();
           })} style={styles.button}>
             Refresh
@@ -637,6 +659,46 @@ export default function AdminOperationsPage() {
 
         <div style={styles.panel}>
           <h2 style={styles.sectionTitle}>Payments And Refunds</h2>
+          <div style={styles.panelHeader}>
+            <span style={styles.count}>{payments.length}</span>
+            <button disabled={busy || !adminUserId} onClick={() => runStep('Load payments', loadPayments)} style={styles.button}>
+              Load Payments
+            </button>
+          </div>
+          <div style={styles.list}>
+            {payments.length === 0 ? (
+              <p style={styles.empty}>No payments loaded.</p>
+            ) : payments.map((payment) => (
+              <button
+                key={String(payment.id)}
+                onClick={() => {
+                  setPaymentId(String(payment.id ?? ''));
+                  if (payment.deliveryId) setDeliveryId(payment.deliveryId);
+                }}
+                style={{
+                  ...styles.deliveryRow,
+                  ...(payment.id === paymentId ? styles.selectedRow : {}),
+                }}
+              >
+                <span style={styles.rowTop}>
+                  <strong>{shortId(payment.id)}</strong>
+                  <StatusBadge status={String(payment.status ?? 'UNKNOWN')} />
+                </span>
+                <span style={styles.rowMeta}>
+                  {String(payment.provider ?? 'provider')} {String(payment.providerRef ?? '-')}
+                </span>
+                <span style={styles.rowMeta}>
+                  {formatMoney(payment.amountMinor, payment.currency)} - delivery {shortId(payment.deliveryId)}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div style={styles.actionGrid}>
+            <Field label="Payment ID" value={paymentId} onChange={setPaymentId} />
+            <button disabled={busy || !paymentId} onClick={() => runStep('Reconcile payment', reconcilePayment)} style={styles.button}>
+              Reconcile Payment
+            </button>
+          </div>
           <DataList items={selectedPayments} empty="No payment records for selected delivery." />
           <DataList items={selectedRefunds} empty="No refund records for selected delivery." />
         </div>
